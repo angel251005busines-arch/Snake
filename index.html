@@ -65,7 +65,7 @@
         let direction = "RIGHT";  // ← ГЛАВНОЕ ИСПРАВЛЕНИЕ: направление по умолчанию
         let nextDirection = "RIGHT";
         let score = 0;
-        let gameSpeed = 150;
+        let gameSpeed = 350;
         let gameInterval;
         let gameRunning = true;
 
@@ -121,8 +121,8 @@
                 food = generateFood();
                 
                 // Ускорение игры каждые 5 очков
-                if (score % 5 === 0 && gameSpeed > 50) {
-                    gameSpeed -= 10;
+                if (score % 5 === 0 && gameSpeed > 150) {
+                    gameSpeed -= 15;
                     clearInterval(gameInterval);
                     gameInterval = setInterval(gameLoop, gameSpeed);
                 }
@@ -209,7 +209,7 @@
             direction = "RIGHT";
             nextDirection = "RIGHT";
             score = 0;
-            gameSpeed = 150;
+            gameSpeed = 350;
             scoreElement.textContent = "Счет: 0";
             
             // Генерируем еду вне змейки
