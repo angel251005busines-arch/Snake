@@ -61,14 +61,15 @@
         
         // Игровые переменные
         let snake = [{ x: 9 * box, y: 10 * box }];
-        let food = generateFood();
-        let direction = null;
-        let nextDirection = null;
+        let food = { x: 5 * box, y: 5 * box };
+        let direction = "RIGHT";  // ← ГЛАВНОЕ ИСПРАВЛЕНИЕ: направление по умолчанию
+        let nextDirection = "RIGHT";
         let score = 0;
         let gameSpeed = 150;
         let gameInterval;
+        let gameRunning = true;
 
-        // Генерация еды (с проверкой)
+        // Генерация еды (с проверкой на змейку)
         function generateFood() {
             let newFood;
             let attempts = 0;
@@ -80,25 +81,25 @@
                 };
                 attempts++;
                 
-                // Защита от бесконечного цикла
-                if (attempts > 100) return { x: 5 * box, y: 5 * box };
-            } while (
-                snake.some(segment => segment.x === newFood.x && segment.y === newFood.y)
-            );
+                if (attempts > 100) {
+                    newFood = { x: 5 * box, y: 5 * box };
+                    break;
+                }
+            } while (snake.some(segment => segment.x === newFood.x && segment.y === newFood.y));
             
             return newFood;
         }
 
         // Основной игровой цикл
         function gameLoop() {
+            if (!gameRunning) return;
             moveSnake();
-            checkCollision();
             drawGame();
         }
 
         // Движение змейки
         function moveSnake() {
-            if (!nextDirection) return;
+            // Обновляем направление
             direction = nextDirection;
             
             const head = { ...snake[0] };
@@ -108,6 +109,7 @@
                 case "RIGHT": head.x += box; break;
                 case "UP": head.y -= box; break;
                 case "DOWN": head.y += box; break;
+                default: return;
             }
             
             snake.unshift(head);
@@ -127,6 +129,9 @@
             } else {
                 snake.pop();
             }
+            
+            // Проверка столкновений после движения
+            checkCollision();
         }
 
         // Проверка столкновений
@@ -134,10 +139,7 @@
             const head = snake[0];
             
             // Стены
-            if (
-                head.x < 0 || head.x >= canvas.width ||
-                head.y < 0 || head.y >= canvas.height
-            ) {
+            if (head.x < 0 || head.x >= canvas.width || head.y < 0 || head.y >= canvas.height) {
                 gameOver();
                 return;
             }
@@ -163,7 +165,7 @@
                 ctx.fillRect(segment.x, segment.y, box, box);
                 
                 // Глазки у головы
-                if (index === 0) {
+                if (index === 0 && direction) {
                     ctx.fillStyle = "white";
                     const eyeSize = box / 5;
                     
@@ -186,37 +188,42 @@
             // Еда
             ctx.fillStyle = "#FF5722";
             ctx.beginPath();
-            ctx.arc(
-                food.x + box/2, 
-                food.y + box/2, 
-                box/2 - 2, 
-                0, 
-                Math.PI * 2
-            );
+            ctx.arc(food.x + box/2, food.y + box/2, box/2 - 2, 0, Math.PI * 2);
             ctx.fill();
         }
 
         // Конец игры
         function gameOver() {
+            gameRunning = false;
             clearInterval(gameInterval);
-            alert(`Игра окончена! Счет: ${score}`);
-            resetGame();
+            setTimeout(() => {
+                alert(`Игра окончена! Счет: ${score}`);
+                resetGame();
+            }, 50);
         }
 
         // Сброс игры
         function resetGame() {
+            gameRunning = true;
             snake = [{ x: 9 * box, y: 10 * box }];
-            food = generateFood();
-            direction = null;
-            nextDirection = null;
+            direction = "RIGHT";
+            nextDirection = "RIGHT";
             score = 0;
             gameSpeed = 150;
             scoreElement.textContent = "Счет: 0";
-            drawGame();
+            
+            // Генерируем еду вне змейки
+            food = { x: 5 * box, y: 5 * box };
+            while (snake.some(segment => segment.x === food.x && segment.y === food.y)) {
+                food = generateFood();
+            }
+            
+            if (gameInterval) clearInterval(gameInterval);
             gameInterval = setInterval(gameLoop, gameSpeed);
+            drawGame();
         }
 
-        // Управление
+        // Управление с кнопок
         document.getElementById("up").addEventListener("click", () => {
             if (direction !== "DOWN") nextDirection = "UP";
         });
@@ -241,8 +248,10 @@
         });
 
         // Инициализация Telegram WebApp
-        Telegram.WebApp.ready();
-        Telegram.WebApp.expand();
+        if (typeof Telegram !== 'undefined' && Telegram.WebApp) {
+            Telegram.WebApp.ready();
+            Telegram.WebApp.expand();
+        }
 
         // Старт игры
         resetGame();
