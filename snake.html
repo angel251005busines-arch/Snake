@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Telegram Snake Game</title>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background: #1e1e1e;
+            touch-action: none;
+            overflow: hidden;
+            font-family: Arial, sans-serif;
+        }
+        canvas {
+            display: block;
+            margin: 10px auto;
+            background: black;
+            border: 2px solid #333;
+        }
+        .controls {
+            display: flex;
+            justify-content: center;
+            gap: 5px;
+            margin-top: 10px;
+        }
+        button {
+            padding: 12px;
+            font-size: 20px;
+            background: #333;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+        #score {
+            color: white;
+            text-align: center;
+            font-size: 24px;
+            margin: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div id="score">Счет: 0</div>
+    <canvas id="gameCanvas" width="300" height="300"></canvas>
+    <div class="controls">
+        <button id="up">⬆️</button>
+        <button id="left">⬅️</button>
+        <button id="down">⬇️</button>
+        <button id="right">➡️</button>
+    </div>
+
+    <script>
+        // Инициализация
+        const canvas = document.getElementById("gameCanvas");
+        const ctx = canvas.getContext("2d");
+        const scoreElement = document.getElementById("score");
+        const box = 20;
+        
+        // Игровые переменные
+        let snake = [{ x: 9 * box, y: 10 * box }];
+        let food = generateFood();
+        let direction = null;
+        let nextDirection = null;
+        let score = 0;
+        let gameSpeed = 150;
+        let gameInterval;
+
+        // Генерация еды (с проверкой)
+        function generateFood() {
+            let newFood;
+            let attempts = 0;
+            
+            do {
+                newFood = {
+                    x: Math.floor(Math.random() * 15) * box,
+                    y: Math.floor(Math.random() * 15) * box
+                };
+                attempts++;
+                
+                // Защита от бесконечного цикла
+                if (attempts > 100) return { x: 5 * box, y: 5 * box };
+            } while (
+                snake.some(segment => segment.x === newFood.x && segment.y === newFood.y)
+            );
+            
+            return newFood;
+        }
+
+        // Основной игровой цикл
+        function gameLoop() {
+            moveSnake();
+            checkCollision();
+            drawGame();
+        }
+
+        // Движение змейки
+        function moveSnake() {
+            if (!nextDirection) return;
+            direction = nextDirection;
+            
+            const head = { ...snake[0] };
+            
+            switch (direction) {
+                case "LEFT": head.x -= box; break;
+                case "RIGHT": head.x += box; break;
+                case "UP": head.y -= box; break;
+                case "DOWN": head.y += box; break;
+            }
+            
+            snake.unshift(head);
+            
+            // Проверка съедания еды
+            if (head.x === food.x && head.y === food.y) {
+                score++;
+                scoreElement.textContent = `Счет: ${score}`;
+                food = generateFood();
+                
+                // Ускорение игры каждые 5 очков
+                if (score % 5 === 0 && gameSpeed > 50) {
+                    gameSpeed -= 10;
+                    clearInterval(gameInterval);
+                    gameInterval = setInterval(gameLoop, gameSpeed);
+                }
+            } else {
+                snake.pop();
+            }
+        }
+
+        // Проверка столкновений
+        function checkCollision() {
+            const head = snake[0];
+            
+            // Стены
+            if (
+                head.x < 0 || head.x >= canvas.width ||
+                head.y < 0 || head.y >= canvas.height
+            ) {
+                gameOver();
+                return;
+            }
+            
+            // Сама в себя
+            for (let i = 1; i < snake.length; i++) {
+                if (head.x === snake[i].x && head.y === snake[i].y) {
+                    gameOver();
+                    return;
+                }
+            }
+        }
+
+        // Отрисовка игры
+        function drawGame() {
+            // Очистка
+            ctx.fillStyle = "black";
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Змейка
+            snake.forEach((segment, index) => {
+                ctx.fillStyle = index === 0 ? "#4CAF50" : "#8BC34A";
+                ctx.fillRect(segment.x, segment.y, box, box);
+                
+                // Глазки у головы
+                if (index === 0) {
+                    ctx.fillStyle = "white";
+                    const eyeSize = box / 5;
+                    
+                    if (direction === "RIGHT") {
+                        ctx.fillRect(segment.x + box - eyeSize*2, segment.y + eyeSize, eyeSize, eyeSize);
+                        ctx.fillRect(segment.x + box - eyeSize*2, segment.y + box - eyeSize*2, eyeSize, eyeSize);
+                    } else if (direction === "LEFT") {
+                        ctx.fillRect(segment.x + eyeSize, segment.y + eyeSize, eyeSize, eyeSize);
+                        ctx.fillRect(segment.x + eyeSize, segment.y + box - eyeSize*2, eyeSize, eyeSize);
+                    } else if (direction === "UP") {
+                        ctx.fillRect(segment.x + eyeSize, segment.y + eyeSize, eyeSize, eyeSize);
+                        ctx.fillRect(segment.x + box - eyeSize*2, segment.y + eyeSize, eyeSize, eyeSize);
+                    } else if (direction === "DOWN") {
+                        ctx.fillRect(segment.x + eyeSize, segment.y + box - eyeSize*2, eyeSize, eyeSize);
+                        ctx.fillRect(segment.x + box - eyeSize*2, segment.y + box - eyeSize*2, eyeSize, eyeSize);
+                    }
+                }
+            });
+            
+            // Еда
+            ctx.fillStyle = "#FF5722";
+            ctx.beginPath();
+            ctx.arc(
+                food.x + box/2, 
+                food.y + box/2, 
+                box/2 - 2, 
+                0, 
+                Math.PI * 2
+            );
+            ctx.fill();
+        }
+
+        // Конец игры
+        function gameOver() {
+            clearInterval(gameInterval);
+            alert(`Игра окончена! Счет: ${score}`);
+            resetGame();
+        }
+
+        // Сброс игры
+        function resetGame() {
+            snake = [{ x: 9 * box, y: 10 * box }];
+            food = generateFood();
+            direction = null;
+            nextDirection = null;
+            score = 0;
+            gameSpeed = 150;
+            scoreElement.textContent = "Счет: 0";
+            drawGame();
+            gameInterval = setInterval(gameLoop, gameSpeed);
+        }
+
+        // Управление
+        document.getElementById("up").addEventListener("click", () => {
+            if (direction !== "DOWN") nextDirection = "UP";
+        });
+        document.getElementById("down").addEventListener("click", () => {
+            if (direction !== "UP") nextDirection = "DOWN";
+        });
+        document.getElementById("left").addEventListener("click", () => {
+            if (direction !== "RIGHT") nextDirection = "LEFT";
+        });
+        document.getElementById("right").addEventListener("click", () => {
+            if (direction !== "LEFT") nextDirection = "RIGHT";
+        });
+
+        // Клавиатура
+        document.addEventListener("keydown", (e) => {
+            switch (e.key) {
+                case "ArrowUp": if (direction !== "DOWN") nextDirection = "UP"; break;
+                case "ArrowDown": if (direction !== "UP") nextDirection = "DOWN"; break;
+                case "ArrowLeft": if (direction !== "RIGHT") nextDirection = "LEFT"; break;
+                case "ArrowRight": if (direction !== "LEFT") nextDirection = "RIGHT"; break;
+            }
+        });
+
+        // Инициализация Telegram WebApp
+        Telegram.WebApp.ready();
+        Telegram.WebApp.expand();
+
+        // Старт игры
+        resetGame();
+    </script>
+</body>
+</html>
