@@ -125,15 +125,15 @@
         x: 80,
         y: CANVAS_H / 2,
         velocity: 0,
-        gravity: 0.4,
-        lift: -7,
+        gravity: 0.35, // было 0.4 → мягче падение
+        lift: -8, // было -7 → выше прыжок
         rotation: 0
     };
     
     // Препятствия (трубы -> антенны/мачты)
     let obstacles = [];
     const OBSTACLE_WIDTH = 50;
-    const OBSTACLE_GAP = 140;
+    const OBSTACLE_GAP = 160; // было 140 → шире проход
     const OBSTACLE_SPACING = 220;
     let frame = 0;
     let score = 0;
