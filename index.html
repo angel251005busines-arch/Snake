@@ -43,6 +43,35 @@
     </style>
 </head>
 <body>
+    
+    <script>
+    // Адаптация под MAX (и Telegram, и браузер)
+    (function() {
+        // Определяем платформу
+        let platform = 'browser';
+        
+        // Проверка на MAX
+        if (typeof window.Max !== 'undefined') {
+            platform = 'max';
+            console.log('Запущено в MAX');
+            if (window.Max.ready) window.Max.ready();
+            if (window.Max.expand) window.Max.expand();
+        }
+        // Проверка на Telegram
+        else if (typeof window.Telegram !== 'undefined' && window.Telegram.WebApp) {
+            platform = 'telegram';
+            console.log('Запущено в Telegram');
+            window.Telegram.WebApp.ready();
+            window.Telegram.WebApp.expand();
+        }
+        
+        console.log('Игра запущена на платформе:', platform);
+        
+        // Сохраняем информацию для других скриптов
+        window.gamePlatform = platform;
+    })();
+</script>
+
     <div id="score">Счет: 0</div>
     <canvas id="gameCanvas" width="300" height="300"></canvas>
     <div class="controls">
