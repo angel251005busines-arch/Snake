@@ -3,8 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>🐍 Snake для МАКС</title>
-    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <title>🐍 Змейка для MAX</title>
     <style>
         * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
         body {
@@ -22,6 +21,13 @@
             font-size: 24px;
             margin: 10px;
             font-weight: 600;
+        }
+        #highScore {
+            color: #ffd700;
+            text-align: center;
+            font-size: 16px;
+            margin: 5px 10px 15px;
+            opacity: 0.9;
         }
         #gameCanvas {
             display: block;
@@ -59,13 +65,11 @@
             opacity: 0.5;
             cursor: not-allowed;
         }
-        /* Позиционирование кнопок-крестовины */
         #up { grid-column: 2; grid-row: 1; }
         #left { grid-column: 1; grid-row: 2; }
         #down { grid-column: 2; grid-row: 2; }
         #right { grid-column: 3; grid-row: 2; }
         
-        /* Экран игры */
         #gameOverlay {
             position: absolute;
             top: 0; left: 0; right: 0; bottom: 0;
@@ -110,24 +114,13 @@
             transition: transform 0.1s;
         }
         .overlay-btn:active { transform: scale(0.98); }
-        .overlay-btn.secondary {
-            background: #555;
-        }
-        
-        /* Рекорд */
-        #highScore {
-            color: #ffd700;
-            text-align: center;
-            font-size: 16px;
-            margin: 5px 10px 15px;
-            opacity: 0.9;
-        }
+        .overlay-btn.secondary { background: #555; }
     </style>
 </head>
 <body>
 
     <div id="score">Счет: 0</div>
-    <div id="highScore">Рекорд: <span id="highScoreValue">0</span></div>
+    <div id="highScore">🏆 Рекорд: <span id="highScoreValue">0</span></div>
     <canvas id="gameCanvas"></canvas>
     
     <div class="controls">
@@ -137,7 +130,6 @@
         <button id="right" aria-label="Вправо">➡️</button>
     </div>
 
-    <!-- Оверлей: старт / конец игры -->
     <div id="gameOverlay">
         <h2 id="overlayTitle">🐍 Змейка</h2>
         <p id="overlayMessage">Управляй свайпами или кнопками</p>
@@ -149,35 +141,66 @@
     </div>
 
     <script>
-    // ========== ИНИЦИАЛИЗАЦИЯ ДЛЯ МАКС ==========
-    (function initMax() {
-        if (typeof window.Max !== 'undefined') {
-            console.log('✅ Запущено в МАКС');
-            if (typeof window.Max.ready === 'function') window.Max.ready();
-            if (typeof window.Max.expand === 'function') window.Max.expand();
-            // Показываем кнопку "Назад" с обработчиком
-            if (window.Max.setBackButtonHandler) {
-                window.Max.setBackButtonHandler(() => {
-                    if (gameRunning) {
-                        showOverlay('⏸ Пауза', 'Продолжить игру?', ['Продолжить', 'Выйти'], (idx) => {
-                            if (idx === 1) window.Max?.close?.();
+    // ========== УНИВЕРСАЛЬНАЯ ИНИЦИАЛИЗАЦИЯ ДЛЯ MAX И TELEGRAM ==========
+    (function initWebApp() {
+        // MAX и Telegram оба используют window.WebApp
+        if (typeof window.WebApp !== 'undefined') {
+            console.log('✅ Запущено в среде WebApp (MAX или Telegram)');
+            
+            // Сообщаем платформе, что приложение готово
+            if (typeof window.WebApp.ready === 'function') {
+                window.WebApp.ready();
+            }
+            if (typeof window.WebApp.expand === 'function') {
+                window.WebApp.expand();
+            }
+            
+            // Получаем стартовые параметры (если есть)
+            if (window.WebApp.initDataUnsafe && window.WebApp.initDataUnsafe.start_param) {
+                console.log('📦 Payload:', window.WebApp.initDataUnsafe.start_param);
+            }
+            
+            // Специфичная для MAX кнопка "Назад"
+            if (typeof window.WebApp.setBackButtonHandler === 'function') {
+                window.WebApp.setBackButtonHandler(() => {
+                    if (gameRunning && !isPaused) {
+                        // Если игра идёт — ставим на паузу
+                        isPaused = true;
+                        clearInterval(gameInterval);
+                        showOverlay('⏸ Пауза', 'Нажми "Продолжить"', ['Продолжить', 'Заново', 'Выйти'], (idx) => {
+                            if (idx === 0) {
+                                isPaused = false;
+                                restartInterval();
+                            } else if (idx === 1) {
+                                startGame();
+                            } else if (idx === 2) {
+                                if (typeof window.WebApp.close === 'function') window.WebApp.close();
+                            }
                         });
+                    } else if (gameRunning && isPaused) {
+                        // Если на паузе — просто продолжаем
+                        isPaused = false;
+                        restartInterval();
+                        hideOverlay();
                     } else {
-                        window.Max?.close?.();
+                        // Игра не идёт — закрываем
+                        if (typeof window.WebApp.close === 'function') window.WebApp.close();
                     }
-                    return false; // не закрывать сразу
                 });
             }
+            
+            // Сохраняем информацию о платформе
+            window.gamePlatform = window.WebApp.platform || 'max_or_telegram';
         } else {
-            console.log('⚠️ Запущено не в МАКС — режим эмуляции');
+            console.log('⚠️ Запущено в обычном браузере');
+            window.gamePlatform = 'browser';
         }
-        window.gamePlatform = 'max';
     })();
 
     // ========== УТИЛИТЫ ==========
     function showAlert(message, callback) {
-        if (window.Max?.showAlert) {
-            window.Max.showAlert(message, callback || (() => {}));
+        if (typeof window.WebApp !== 'undefined' && typeof window.WebApp.showAlert === 'function') {
+            window.WebApp.showAlert(message, callback || (() => {}));
         } else {
             alert(message);
             if (callback) callback();
@@ -185,19 +208,34 @@
     }
 
     function hapticFeedback(type = 'light') {
-        if (window.Max?.HapticFeedback) {
+        if (typeof window.WebApp !== 'undefined' && window.WebApp.HapticFeedback) {
             const map = { light: 'light', medium: 'medium', heavy: 'heavy', error: 'error' };
-            window.Max.HapticFeedback.impactOccurred?.(map[type] || 'light');
+            const impactType = map[type] || 'light';
+            if (typeof window.WebApp.HapticFeedback.impactOccurred === 'function') {
+                window.WebApp.HapticFeedback.impactOccurred(impactType);
+            }
         }
     }
 
+    // ========== ПРАВИЛЬНЫЙ ШЕРИНГ ДЛЯ MAX (через диплинк) ==========
     function shareScore(score) {
         const text = `Я набрал ${score} очков в Змейке! 🐍 Сыграй со мной: ${location.href}`;
-        if (window.Max?.share) {
-            window.Max.share({ text });
-        } else if (navigator.share) {
+        const encodedText = encodeURIComponent(text);
+        const shareLink = `https://max.ru/:share?text=${encodedText}`;
+        
+        // Пытаемся открыть диплинк MAX
+        if (typeof window.WebApp !== 'undefined' && typeof window.WebApp.openLink === 'function') {
+            window.WebApp.openLink(shareLink);
+        } 
+        // Запасной вариант для Telegram
+        else if (typeof window.Telegram !== 'undefined' && window.Telegram.WebApp && window.Telegram.WebApp.openLink) {
+            window.Telegram.WebApp.openLink(shareLink);
+        }
+        // Запасной вариант для браузера
+        else if (navigator.share) {
             navigator.share({ title: 'Змейка', text, url: location.href });
-        } else {
+        } 
+        else {
             navigator.clipboard?.writeText(text);
             showAlert('Ссылка скопирована в буфер обмена!');
         }
@@ -221,7 +259,6 @@
     let gameRunning = false;
     let isPaused = false;
 
-    // Игровые переменные
     let snake = [];
     let food = {};
     let direction = "RIGHT";
@@ -230,18 +267,16 @@
     let highScore = localStorage.getItem('snake_max_highscore') || 0;
     highScoreElement.textContent = highScore;
 
-    // Адаптивный размер канваса
     function resizeCanvas() {
         const maxSize = Math.min(window.innerWidth - 40, window.innerHeight - 220, 360);
-        const size = Math.floor(maxSize / box) * box; // кратное box
+        const size = Math.floor(maxSize / box) * box;
         canvas.width = size;
         canvas.height = size;
-        if (!gameRunning) drawGame(); // перерисовать в меню
+        if (!gameRunning) drawGame();
     }
     window.addEventListener('resize', resizeCanvas);
     resizeCanvas();
 
-    // ========== ЛОГИКА ИГРЫ ==========
     function generateFood() {
         let newFood, attempts = 0;
         const cols = canvas.width / box;
@@ -290,14 +325,10 @@
 
     function checkCollision() {
         const head = snake[0];
-        const cols = canvas.width / box;
-        const rows = canvas.height / box;
         
-        // Стены
         if (head.x < 0 || head.x >= canvas.width || head.y < 0 || head.y >= canvas.height) {
             return endGame();
         }
-        // Хвост
         for (let i = 1; i < snake.length; i++) {
             if (head.x === snake[i].x && head.y === snake[i].y) {
                 return endGame();
@@ -306,11 +337,10 @@
     }
 
     function drawGame() {
-        // Фон
         ctx.fillStyle = "#000";
         ctx.fillRect(0, 0, canvas.width, canvas.height);
         
-        // Сетка (опционально, для стиля)
+        // Сетка
         ctx.strokeStyle = "#111";
         ctx.lineWidth = 0.5;
         for (let x = 0; x < canvas.width; x += box) {
@@ -320,14 +350,11 @@
             ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(canvas.width, y); ctx.stroke();
         }
         
-        // Змейка
         snake.forEach((segment, index) => {
-            // Градиент тела
             const hue = 120 - (index * 2);
             ctx.fillStyle = index === 0 ? `hsl(${hue}, 70%, 50%)` : `hsl(${hue}, 60%, 45%)`;
             ctx.fillRect(segment.x + 1, segment.y + 1, box - 2, box - 2);
             
-            // Глаза у головы
             if (index === 0) {
                 ctx.fillStyle = "white";
                 const eye = box / 5;
@@ -349,12 +376,10 @@
             }
         });
         
-        // Еда (яблоко)
         ctx.fillStyle = "#FF5722";
         ctx.beginPath();
         ctx.arc(food.x + box/2, food.y + box/2, box/2 - 3, 0, Math.PI * 2);
         ctx.fill();
-        // Блик
         ctx.fillStyle = "rgba(255,255,255,0.6)";
         ctx.beginPath();
         ctx.arc(food.x + box/2 - 3, food.y + box/2 - 3, 3, 0, Math.PI * 2);
@@ -383,11 +408,12 @@
         food = generateFood();
         
         scoreElement.textContent = "Счет: 0";
-        overlay.classList.add("hidden");
+        hideOverlay();
         
         clearInterval(gameInterval);
         restartInterval();
         drawGame();
+        document.querySelectorAll('.controls button').forEach(btn => btn.disabled = false);
     }
 
     function endGame() {
@@ -395,14 +421,12 @@
         clearInterval(gameInterval);
         hapticFeedback('error');
         
-        // Обновляем рекорд
         if (score > highScore) {
             highScore = score;
             localStorage.setItem('snake_max_highscore', highScore);
             highScoreElement.textContent = highScore;
         }
         
-        // Показываем оверлей
         overlayTitle.textContent = "💥 Игра окончена!";
         overlayMessage.textContent = score > highScore - 1 && score === highScore 
             ? "🎉 Новый рекорд!" 
@@ -412,7 +436,6 @@
         shareBtn.style.display = score > 0 ? 'inline-block' : 'none';
         overlay.classList.remove("hidden");
         
-        // Блокируем кнопки управления
         document.querySelectorAll('.controls button').forEach(btn => btn.disabled = true);
     }
 
@@ -421,7 +444,6 @@
         overlayMessage.textContent = message;
         finalScoreEl.textContent = '';
         
-        // Создаём кнопки динамически
         const btnContainer = document.getElementById('overlayButtons');
         btnContainer.innerHTML = '';
         buttons.forEach((text, idx) => {
@@ -429,7 +451,7 @@
             btn.className = `overlay-btn ${idx > 0 ? 'secondary' : ''}`;
             btn.textContent = text;
             btn.onclick = () => {
-                overlay.classList.add('hidden');
+                hideOverlay();
                 if (onChoose) onChoose(idx);
             };
             btnContainer.appendChild(btn);
@@ -438,12 +460,16 @@
         overlay.classList.remove('hidden');
     }
 
-    function resetControls() {
-        document.querySelectorAll('.controls button').forEach(btn => btn.disabled = false);
+    function hideOverlay() {
+        overlay.classList.add('hidden');
+        // Восстанавливаем стандартные кнопки
+        const btnContainer = document.getElementById('overlayButtons');
+        btnContainer.innerHTML = '';
+        btnContainer.appendChild(startBtn);
+        btnContainer.appendChild(shareBtn);
     }
 
     // ========== УПРАВЛЕНИЕ ==========
-    // Кнопки
     const bindDirection = (btnId, dir, opposite) => {
         document.getElementById(btnId).addEventListener('click', () => {
             if (gameRunning && !isPaused && direction !== opposite) {
@@ -456,7 +482,6 @@
     bindDirection('left', 'LEFT', 'RIGHT');
     bindDirection('right', 'RIGHT', 'LEFT');
 
-    // Клавиатура
     document.addEventListener('keydown', (e) => {
         if (!gameRunning || isPaused) return;
         const keyMap = {
@@ -469,7 +494,6 @@
         }
     });
 
-    // Свайпы
     let touchStart = { x: 0, y: 0 };
     const minSwipe = 30;
 
@@ -501,7 +525,6 @@
 
     canvas.addEventListener('touchmove', (e) => e.preventDefault(), { passive: false });
 
-    // Пауза по тапу на канвас
     canvas.addEventListener('click', () => {
         if (gameRunning && !isPaused) {
             isPaused = true;
@@ -512,31 +535,26 @@
                     restartInterval();
                 } else if (idx === 1) {
                     startGame();
-                } else {
-                    window.Max?.close?.();
+                } else if (idx === 2) {
+                    if (typeof window.WebApp !== 'undefined' && typeof window.WebApp.close === 'function') {
+                        window.WebApp.close();
+                    }
                 }
             });
         }
     });
 
-    // Кнопки оверлея
-    startBtn.onclick = () => {
-        resetControls();
-        startGame();
-    };
-    
+    startBtn.onclick = () => startGame();
     shareBtn.onclick = () => shareScore(score);
 
-    // ========== СТАРТ ==========
-    // Показываем стартовый экран
-    overlayTitle.textContent = "🐍 Змейка для МАКС";
+    // ========== СТАРТОВЫЙ ЭКРАН ==========
+    overlayTitle.textContent = "🐍 Змейка для MAX";
     overlayMessage.textContent = "Свайпай или используй кнопки для управления";
     finalScoreEl.textContent = "";
     startBtn.textContent = "▶ Начать игру";
     shareBtn.style.display = 'none';
     overlay.classList.remove('hidden');
     
-    // Первоначальная отрисовка
     snake = [{ x: 5 * box, y: 10 * box }];
     food = generateFood();
     drawGame();
