@@ -232,7 +232,7 @@
     function updateObstacles() {
         for (let i = 0; i < obstacles.length; i++) {
             obstacles[i].x -= 3;
-            
+            OBSTACLE_SPEED: 2.5 // скорость препятствий
             // Подсчёт очков
             if (!obstacles[i].counted && obstacles[i].x + OBSTACLE_WIDTH < drone.x) {
                 obstacles[i].counted = true;
