@@ -5,16 +5,16 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <title>Flappy Drone</title>
 <style>
-* { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+* { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; user-select: none; }
 body {
   background: #0a0a0a;
   display: flex;
   justify-content: center;
   align-items: center;
-  height: 100dvh; /* Dynamic viewport height для мобильных */
+  height: 100dvh;
   overflow: hidden;
   font-family: 'Segoe UI', Arial, sans-serif;
-  touch-action: none; /* 🔥 Отключает скролл/зум в мессенджерах */
+  touch-action: none;
 }
 canvas {
   display: block;
@@ -33,14 +33,13 @@ canvas {
 <script>
 const canvas = document.getElementById('game');
 const ctx = canvas.getContext('2d');
-
-// Логическое разрешение игры (не меняется для стабильной физики)
 const LOG_W = 420, LOG_H = 720;
 canvas.width = LOG_W; canvas.height = LOG_H;
 
-// 🎮 Состояния
+// 🎮 Game State
 let state = 'menu'; // menu, select, playing, gameover
 let selectedDrone = 2; // 1=Тактический, 2=Стелс, 3=FPV, 4=Тяжёлый
+let soundEnabled = true;
 
 let score = 0, frames = 0, shakeTimer = 0;
 let particles = [], explosions = [], winMsgTimer = 0;
@@ -58,7 +57,7 @@ const groundH = 60;
 let stars = []; for(let i=0;i<60;i++) stars.push({x:Math.random()*LOG_W,y:Math.random()*LOG_H,s:Math.random()*2+0.5,b:Math.random()});
 let clouds = []; for(let i=0;i<5;i++) clouds.push({x:Math.random()*LOG_W,y:Math.random()*LOG_H*0.5,w:Math.random()*80+40,speed:Math.random()*0.3+0.1});
 
-// 🎯 Зоны выбора
+// 🎯 Zones
 const droneSelectZones = [
   { x: 30, y: 200, w: 160, h: 100, id: 1, name: 'ТАКТИЧЕСКИЙ' },
   { x: 230, y: 200, w: 160, h: 100, id: 2, name: 'СТЕЛС' },
@@ -66,7 +65,51 @@ const droneSelectZones = [
   { x: 230, y: 340, w: 160, h: 100, id: 4, name: 'ТЯЖЁЛЫЙ' }
 ];
 
-// 🔧 Вспомогательные функции
+// 🔊 Audio System (Web Audio API)
+let audioCtx = null;
+function initAudio() {
+  if (!audioCtx) {
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  }
+  if (audioCtx.state === 'suspended') audioCtx.resume();
+}
+
+function playTone(freq, type, duration, vol=0.1) {
+  if (!soundEnabled || !audioCtx) return;
+  const osc = audioCtx.createOscillator();
+  const gain = audioCtx.createGain();
+  osc.type = type;
+  osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
+  gain.gain.setValueAtTime(vol, audioCtx.currentTime);
+  gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + duration);
+  osc.connect(gain); gain.connect(audioCtx.destination);
+  osc.start(); osc.stop(audioCtx.currentTime + duration);
+}
+
+function playNoise(duration, vol=0.2) {
+  if (!soundEnabled || !audioCtx) return;
+  const bufferSize = audioCtx.sampleRate * duration;
+  const buffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
+  const data = buffer.getChannelData(0);
+  for (let i = 0; i < bufferSize; i++) data[i] = Math.random() * 2 - 1;
+  const source = audioCtx.createBufferSource();
+  source.buffer = buffer;
+  const gain = audioCtx.createGain();
+  gain.gain.setValueAtTime(vol, audioCtx.currentTime);
+  gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + duration);
+  source.connect(gain); gain.connect(audioCtx.destination);
+  source.start();
+}
+
+function sfxFlap() { playNoise(0.05, 0.1); playTone(300, 'sine', 0.05, 0.05); }
+function sfxHit() { playNoise(0.4, 0.4); playTone(80, 'sawtooth', 0.3, 0.2); }
+function sfxTarget() { playTone(600, 'sine', 0.1, 0.15); setTimeout(()=>playTone(900, 'sine', 0.2, 0.15), 100); }
+function sfxGameOver() { playTone(200, 'square', 0.3, 0.2); setTimeout(()=>playTone(100, 'sawtooth', 0.5, 0.3), 200); }
+function sfxClick() { playTone(800, 'sine', 0.05, 0.1); }
+
+function vibrate(pattern) { if (navigator.vibrate) navigator.vibrate(pattern); }
+
+// 🎮 Core Functions
 function resetGame() {
   drone.y = LOG_H/2; drone.vy = 0; drone.rotation = 0; drone.propAngle = 0;
   towers = []; bullets = []; particles = []; explosions = [];
@@ -113,37 +156,41 @@ function addParticles(x, y, count, color) {
   }
 }
 
-// 🎯 Универсальный обработчик ввода (Pointer Events для всех устройств)
+// 🎯 Input Handling
 function handleInput(e) {
   e.preventDefault();
-  // Получаем точные координаты в логическом разрешении canvas
+  initAudio(); // 🔊 Важно для автоплея в мини-приложениях
+  
   const rect = canvas.getBoundingClientRect();
   const clientX = e.touches ? e.touches[0].clientX : e.clientX;
   const clientY = e.touches ? e.touches[0].clientY : e.clientY;
   const x = (clientX - rect.left) * (LOG_W / rect.width);
   const y = (clientY - rect.top) * (LOG_H / rect.height);
 
-  if (state === 'menu') { state = 'select'; return; }
+  // 🔊 Toggle Sound
+  if (state === 'menu' && x >= LOG_W - 60 && x <= LOG_W - 10 && y >= 10 && y <= 50) {
+    soundEnabled = !soundEnabled;
+    sfxClick();
+    return;
+  }
+
+  if (state === 'menu') { state = 'select'; sfxClick(); return; }
   if (state === 'select') { 
     for (let z of droneSelectZones) {
       if (x >= z.x && x <= z.x+z.w && y >= z.y && y <= z.y+z.h) {
-        selectedDrone = z.id;
-        resetGame();
-        return;
+        selectedDrone = z.id; sfxClick(); resetGame(); return;
       }
     }
-    // Клик вне карточек = назад в меню
-    if (x >= LOG_W/2 - 60 && x <= LOG_W/2 + 60 && y >= LOG_H - 30 && y <= LOG_H - 5) {
-      state = 'menu';
-    }
+    if (x >= LOG_W/2 - 60 && x <= LOG_W/2 + 60 && y >= LOG_H - 30 && y <= LOG_H - 5) { state = 'menu'; sfxClick(); }
     return; 
   }
   if (state === 'gameover') { 
-    shakeTimer = 0; state = 'select'; return; 
+    shakeTimer = 0; state = 'select'; sfxClick(); return; 
   }
   if (state === 'playing') {
     drone.vy = drone.flapPower;
     addParticles(drone.x, drone.y + drone.h, 3, '#aaa');
+    sfxFlap();
   }
 }
 
@@ -151,17 +198,11 @@ canvas.addEventListener('pointerdown', handleInput, { passive: false });
 canvas.addEventListener('touchstart', (e) => { e.preventDefault(); handleInput(e); }, { passive: false });
 document.addEventListener('keydown', (e) => { if (e.code === 'Space') handleInput(e); });
 
-// Ресайз для адаптации к повороту экрана или изменению окна мессенджера
-function resize() {
-  // Логический размер не меняется, CSS сам скейлит canvas
-  // Но можно обновить пропорции если нужно
-}
-window.addEventListener('resize', resize);
-
 function checkCollision(ax,ay,aw,ah, bx,by,bw,bh) {
   return ax < bx+bw && ax+aw > bx && ay < by+bh && ay+ah > by;
 }
 
+// Drawing helpers
 function drawFlagRU(x,y,w,h) {
   const s = h/3; ctx.fillStyle='#fff'; ctx.fillRect(x,y,w,s); ctx.fillStyle='#0039A6'; ctx.fillRect(x,y+s,w,s); ctx.fillStyle='#D52B1E'; ctx.fillRect(x,y+s*2,w,s);
 }
@@ -379,6 +420,12 @@ function drawMenu() {
   ctx.font = '12px monospace'; ctx.fillStyle = 'rgba(255,255,255,0.5)';
   const names = ['', 'ТАКТИЧЕСКИЙ', 'СТЕЛС', 'FPV', 'ТЯЖЁЛЫЙ'];
   ctx.fillText(`Текущий: ${names[selectedDrone]}`, LOG_W/2, LOG_H/2+245);
+  
+  // Sound Toggle Button
+  ctx.fillStyle = soundEnabled ? '#48bb78' : '#ff4444';
+  ctx.fillRect(LOG_W - 50, 15, 40, 30);
+  ctx.fillStyle = '#fff'; ctx.font = '20px monospace';
+  ctx.fillText(soundEnabled ? '🔊' : '🔇', LOG_W - 30, 38);
 }
 
 function drawGameOver() {
@@ -400,7 +447,7 @@ function update() {
   drone.y += drone.vy * speedMultiplier;
   drone.rotation = Math.max(-0.5, Math.min(drone.vy*0.08, 0.8));
   if(drone.y<0){ drone.y=0; drone.vy=0; }
-  if(drone.y+drone.h > LOG_H-groundH){ addExplosion(drone.x+drone.w/2, drone.y+drone.h/2, 30); shakeTimer=15; state='gameover'; return; }
+  if(drone.y+drone.h > LOG_H-groundH){ addExplosion(drone.x+drone.w/2, drone.y+drone.h/2, 30); shakeTimer=15; state='gameover'; sfxGameOver(); vibrate([50,100,50]); return; }
 
   towerTimer++;
   if(towerTimer >= currentTowerInterval){ towerTimer=0; spawnTower(); }
@@ -421,16 +468,17 @@ function update() {
     if(Math.hypot(b.x-(drone.x+drone.w/2), b.y-(drone.y+drone.h/2)) < b.r+12){
       droneHP--; hitFlashTimer = 15; invincibleTimer = 90; shakeTimer = 8;
       addExplosion(drone.x+drone.w/2, drone.y+drone.h/2, 15, '#ff4444');
+      sfxHit(); vibrate([40]); // 🔊📳
       drone.vy = 4; drone.x = Math.max(30, drone.x - 25);
       b.x = -999; b.y = -999;
-      if(droneHP <= 0){ addExplosion(drone.x+drone.w/2, drone.y+drone.h/2, 40, '#ff8844'); shakeTimer=20; state='gameover'; }
+      if(droneHP <= 0){ addExplosion(drone.x+drone.w/2, drone.y+drone.h/2, 40, '#ff8844'); shakeTimer=20; state='gameover'; sfxGameOver(); vibrate([50,100,50]); }
     }
   });
 
   towers.forEach(t => {
     if(checkCollision(drone.x,drone.y,drone.w,drone.h, t.x,0,towerWidth,t.topH) ||
        checkCollision(drone.x,drone.y,drone.w,drone.h, t.x,t.botY,towerWidth,LOG_H-t.botY)){
-      addExplosion(drone.x+drone.w/2, drone.y+drone.h/2, 25, '#ff8844'); shakeTimer=10; state='gameover';
+      addExplosion(drone.x+drone.w/2, drone.y+drone.h/2, 25, '#ff8844'); shakeTimer=10; state='gameover'; sfxHit(); vibrate([50,100,50]);
     }
   });
 
@@ -439,6 +487,7 @@ function update() {
     if(checkCollision(drone.x,drone.y,drone.w,drone.h, target.x-target.w/2, target.y-target.h/2, target.w, target.h)){
       addExplosion(target.x, target.y, 50, '#ffaa00'); addExplosion(target.x, target.y, 30, '#ff4444');
       shakeTimer=20; score+=5; targetActive=false; target=null; winMsgTimer=120;
+      sfxTarget(); vibrate([20]); // 🔊📳
       slowMoTimer=60; speedMultiplier=0.35; difficultyLevel++;
       baseTowerSpeed=Math.min(5.5, 2.5+difficultyLevel*0.4);
       baseBulletSpeed=Math.min(7.0, 4.5+difficultyLevel*0.5);
@@ -455,7 +504,6 @@ function update() {
 
 function draw() {
   ctx.save();
-  // Тряска только во время игры/смерти
   if(shakeTimer>0 && (state==='playing' || state==='gameover')) {
     ctx.translate((Math.random()-0.5)*shakeTimer, (Math.random()-0.5)*shakeTimer);
   }
