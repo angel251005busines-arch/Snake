@@ -1,0 +1,343 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<title>Flappy Drone 3D</title>
+<style>
+html, body { margin: 0; padding: 0; overflow: hidden; overscroll-behavior: none; background: #050505; }
+body { font-family: 'Segoe UI', Arial, sans-serif; touch-action: none; -webkit-user-select: none; user-select: none; height: 100dvh; width: 100vw; position: fixed; top: 0; left: 0; }
+#gameCanvas { display: block; width: 100%; height: 100%; touch-action: none; }
+
+#ui { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; display: flex; flex-direction: column; align-items: center; justify-content: center; padding-top: env(safe-area-inset-top, 10px); }
+#ui > * { pointer-events: auto; }
+.screen { display: none; flex-direction: column; align-items: center; text-align: center; color: #fff; width: 92%; max-width: 380px; background: rgba(10,15,25,0.85); padding: 20px; border-radius: 16px; border: 1px solid rgba(255,255,255,0.1); backdrop-filter: blur(10px); }
+.screen.active { display: flex; }
+h1 { font-size: 2.2rem; text-shadow: 0 0 15px rgba(0,180,255,0.6); margin-bottom: 6px; }
+h2 { font-size: 1.3rem; margin: 6px 0; color: #ff6b35; }
+.btn { background: rgba(255,107,53,0.15); border: 2px solid #ff6b35; color: #fff; padding: 12px 20px; margin: 6px; font-size: 1.1rem; cursor: pointer; border-radius: 8px; transition: 0.15s; width: 85%; -webkit-tap-highlight-color: transparent; }
+.btn:active { transform: scale(0.97); background: rgba(255,107,53,0.35); }
+.drone-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 12px 0; width: 100%; }
+.drone-card { background: rgba(255,255,255,0.06); border: 2px solid rgba(255,255,255,0.2); border-radius: 10px; padding: 12px; cursor: pointer; transition: 0.15s; }
+.drone-card.selected { border-color: #48bb78; background: rgba(72,187,120,0.15); }
+.drone-card:active { transform: scale(0.97); }
+
+#hud { position: absolute; top: env(safe-area-inset-top, 10px); left: 10px; right: 10px; display: none; justify-content: space-between; align-items: center; font-size: 0.95rem; color: #fff; pointer-events: none; padding: 6px 10px; background: rgba(0,0,0,0.4); border-radius: 8px; backdrop-filter: blur(5px); }
+.hp-bar { width: 45px; height: 7px; background: rgba(0,0,0,0.6); border-radius: 4px; overflow: hidden; border: 1px solid rgba(255,255,255,0.3); }
+.hp-fill { height: 100%; background: #48bb78; transition: width 0.2s; }
+#sound-toggle { position: absolute; top: env(safe-area-inset-top, 10px); right: 10px; background: rgba(0,0,0,0.4); color: #fff; border: 1px solid rgba(255,255,255,0.2); padding: 8px 10px; border-radius: 6px; cursor: pointer; font-size: 1.1rem; z-index: 10; }
+</style>
+</head>
+<body>
+<canvas id="gameCanvas"></canvas>
+
+<div id="ui">
+  <div id="hud">
+    <div style="display:flex;align-items:center;gap:6px;"><span>❤️</span><div class="hp-bar"><div class="hp-fill" id="hp-fill"></div></div></div>
+    <span id="score-display" style="font-weight:bold; text-shadow:0 0 4px #000;">0</span>
+  </div>
+  <button id="sound-toggle">🔊</button>
+
+  <div id="menu-screen" class="screen active">
+    <h1>FLAPPY DRONE</h1>
+    <h2>3D EDITION</h2>
+    <button class="btn" id="btn-start">▶ ИГРАТЬ</button>
+    <div style="margin-top:8px; opacity:0.7; font-size:0.85rem;">Тапай / Клик / Пробел</div>
+  </div>
+
+  <div id="select-screen" class="screen">
+    <h2>ВЫБЕРИ ДРОНА</h2>
+    <div class="drone-grid" id="drone-grid"></div>
+    <button class="btn" id="btn-back-menu" style="border-color:#888;">← НАЗАД</button>
+  </div>
+
+  <div id="gameover-screen" class="screen">
+    <h2 style="color:#ff4444;">GAME OVER</h2>
+    <div style="font-size:1.1rem; margin:8px 0;">Счёт: <span id="go-score">0</span> | Ур: <span id="go-level">1</span></div>
+    <button class="btn" id="btn-reselect">🔄 В МЕНЮ ДРОНОВ</button>
+  </div>
+</div>
+
+<script>
+// ================= 🍎 iOS & WEBVIEW =================
+const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+function vibrate(p) { if (!isIOS && navigator.vibrate) navigator.vibrate(p); }
+
+// ================= 🔊 AUDIO =================
+let audioCtx, soundEnabled = true, audioUnlocked = false;
+function initAudio() {
+  if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  if (audioCtx.state === 'suspended') audioCtx.resume();
+  if (!audioUnlocked && isIOS) {
+    const o = audioCtx.createOscillator(), g = audioCtx.createGain();
+    g.gain.value = 0.0001; o.connect(g); g.connect(audioCtx.destination);
+    o.start(); o.stop(audioCtx.currentTime + 0.05); audioUnlocked = true;
+  }
+}
+function playTone(f, t, d, v=0.1) { if(!soundEnabled||!audioCtx) return; const o=audioCtx.createOscillator(), g=audioCtx.createGain(); o.type=t; o.frequency.setValueAtTime(f, audioCtx.currentTime); g.gain.setValueAtTime(v, audioCtx.currentTime); g.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime+d); o.connect(g); g.connect(audioCtx.destination); o.start(); o.stop(audioCtx.currentTime+d); }
+function playNoise(d, v=0.2) { if(!soundEnabled||!audioCtx) return; const b=audioCtx.createBuffer(1, audioCtx.sampleRate*d, audioCtx.sampleRate), d1=b.getChannelData(0); for(let i=0;i<d1.length;i++) d1[i]=Math.random()*2-1; const s=audioCtx.createBufferSource(), g=audioCtx.createGain(); s.buffer=b; g.gain.setValueAtTime(v, audioCtx.currentTime); g.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime+d); s.connect(g); g.connect(audioCtx.destination); s.start(); }
+const sfx = { flap:()=>{playNoise(0.05,0.1);playTone(300,'sine',0.05,0.05)}, hit:()=>{playNoise(0.4,0.4);playTone(80,'sawtooth',0.3,0.2)}, target:()=>{playTone(600,'sine',0.1,0.15);setTimeout(()=>playTone(900,'sine',0.2,0.15),100)}, over:()=>{playTone(200,'square',0.3,0.2);setTimeout(()=>playTone(100,'sawtooth',0.5,0.3),200)}, click:()=>{playTone(800,'sine',0.05,0.1)} };
+
+// ================= 🎮 SETUP =================
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+let W, H;
+function resize() { W = canvas.width = window.innerWidth; H = canvas.height = window.innerHeight; }
+resize(); window.addEventListener('resize', resize);
+
+const droneTypes = [
+  { id:1, name:'ТАКТИЧЕСКИЙ', c1:'#4a4a5a', c2:'#2d2d3a' },
+  { id:2, name:'СТЕЛС',       c1:'#1e293b', c2:'#0f172a' },
+  { id:3, name:'FPV',         c1:'#2a2a3a', c2:'#1a1a25' },
+  { id:4, name:'ТЯЖЁЛЫЙ',     c1:'#4b5320', c2:'#3a401a' }
+];
+let selectedDrone = 2, state = 'menu';
+
+// Game vars
+let score = 0, frames = 0, difficulty = 0;
+let drone = { x: W*0.25, y: H/2, w: 40, h: 24, vy: 0, rot: 0, prop: 0 };
+let droneHP = 5, maxHP = 5, invincible = 0;
+let towers = [], bullets = [], target = null, targetActive = false;
+let towerTimer = 0, towerSpeed = 2.2, towerGap = 170;
+let bulletSpeed = 3.8;
+let slowMo = 0, speedMult = 1, winMsgTimer = 0;
+let gravity = 0.4, flapPower = -7.5;
+let groundH = 80;
+
+// UI Logic
+const ui = {
+  show: (screen) => {
+    document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+    document.getElementById(`${screen}-screen`).classList.add('active');
+    document.getElementById('hud').style.display = screen==='playing'?'flex':'none';
+    state = screen;
+    if(screen==='select') buildDroneGrid();
+    if(screen==='playing') { sfx.click(); resetGame(); }
+  },
+  updateHP: () => {
+    const f = document.getElementById('hp-fill');
+    f.style.width = `${(droneHP/maxHP)*100}%`;
+    f.style.background = droneHP>2?'#48bb78':droneHP>1?'#ffaa00':'#ff4444';
+  },
+  updateScore: () => document.getElementById('score-display').textContent = score
+};
+
+function buildDroneGrid() {
+  const g = document.getElementById('drone-grid'); g.innerHTML = '';
+  droneTypes.forEach(dt => {
+    const c = document.createElement('div');
+    c.className = `drone-card ${selectedDrone===dt.id?'selected':''}`;
+    c.innerHTML = `<div style="font-weight:bold;margin-bottom:4px;">${dt.name}</div>`;
+    c.onclick = (e) => { e.stopPropagation(); selectedDrone=dt.id; sfx.click(); buildDroneGrid(); ui.show('playing'); };
+    g.appendChild(c);
+  });
+}
+
+function resetGame() {
+  drone.y = H/2; drone.vy = 0; drone.rot = 0;
+  towers = []; bullets = []; target = null; targetActive = false;
+  score = 0; frames = 0; difficulty = 0; towerSpeed = 2.2; bulletSpeed = 3.8; towerTimer = 0;
+  droneHP = maxHP; invincible = 0; slowMo = 0; speedMult = 1; winMsgTimer = 0;
+  ui.updateHP(); ui.updateScore();
+}
+
+// ================= 🎮 INPUT =================
+function handleGlobalInput(e) {
+  initAudio();
+  if (e.target.closest('.btn') || e.target.closest('.drone-card') || e.target.id === 'sound-toggle') return;
+  if (state === 'menu') { ui.show('select'); return; }
+  if (state === 'gameover') { ui.show('select'); return; }
+  if (state === 'playing') { drone.vy = flapPower; sfx.flap(); }
+}
+
+document.addEventListener('pointerdown', handleGlobalInput, {passive:false});
+document.addEventListener('keydown', e => { if(e.code==='Space' && state==='playing') { e.preventDefault(); drone.vy = flapPower; sfx.flap(); } });
+
+document.getElementById('sound-toggle').onclick = (e) => { e.stopPropagation(); soundEnabled = !soundEnabled; e.target.textContent = soundEnabled?'🔊':'🔇'; if(soundEnabled) sfx.click(); };
+document.getElementById('btn-start').onclick = (e) => { e.stopPropagation(); ui.show('select'); };
+document.getElementById('btn-back-menu').onclick = (e) => { e.stopPropagation(); ui.show('menu'); };
+document.getElementById('btn-reselect').onclick = (e) => { e.stopPropagation(); ui.show('select'); };
+
+// ================= 💥 LOGIC =================
+function checkCollisions() {
+  const r = 16;
+  for(let t of towers) {
+    if (drone.x + r > t.x && drone.x - r < t.x + 55) {
+      if (drone.y - r < t.topH || drone.y + r > t.botY) return 'tower';
+    }
+  }
+  for(let b of bullets) if (Math.hypot(drone.x - b.x, drone.y - b.y) < r + b.r) return 'bullet';
+  if(target && targetActive && Math.hypot(drone.x - target.x, drone.y - target.y) < r + 22) return 'target';
+  return null;
+}
+
+function update() {
+  frames++;
+  if(state !== 'playing') return;
+
+  if(slowMo>0) { slowMo--; speedMult = 0.25; } else { speedMult = Math.min(1, speedMult+0.02); }
+  if(invincible>0) invincible--;
+
+  drone.vy += gravity * speedMult;
+  drone.y += drone.vy * speedMult;
+  drone.rot = Math.max(-0.5, Math.min(drone.vy*0.06, 0.7));
+  drone.prop += 0.5 * speedMult;
+
+  // Boundaries
+  if(drone.y < 0) { drone.y = 0; drone.vy = 0; }
+  if(drone.y + drone.h > H - groundH) { sfx.over(); vibrate([50,100,50]); state='gameover'; document.getElementById('go-score').textContent=score; document.getElementById('go-level').textContent=difficulty+1; ui.show('gameover'); return; }
+
+  // Towers
+  towerTimer++;
+  if(towerTimer > Math.max(60, 100 - difficulty*3)) { towerTimer=0; spawnTower(); }
+  towers.forEach(t => {
+    t.x -= towerSpeed * speedMult;
+    t.shootTimer++;
+    if(t.shootTimer > 75 && t.x > 0 && t.x < W*0.6) { t.shootTimer=0; spawnBullet(t); }
+    if(!t.passed && t.x + 55 < drone.x - 10) { t.passed=true; score++; ui.updateScore(); if(score%10===0) spawnTarget(); }
+  });
+  towers = towers.filter(t => t.x > -100);
+
+  // Bullets
+  bullets.forEach(b => { b.x += b.vx*speedMult; b.y += b.vy*speedMult; });
+  bullets = bullets.filter(b => b.x > -20 && b.x < W+20 && b.y > -20 && b.y < H+20);
+
+  // Target
+  if(target && targetActive) {
+    target.x -= 1.5 * speedMult;
+    if(target.x < -50) { target=null; targetActive=false; }
+  }
+
+  // Collisions
+  const hit = checkCollisions();
+  if(hit && invincible<=0) {
+    if(hit==='target') {
+      sfx.target(); vibrate([20]); score+=5; difficulty++; ui.updateScore();
+      droneHP = Math.min(maxHP, droneHP+1); ui.updateHP();
+      slowMo=45; speedMult=0.25;
+      towerSpeed = Math.min(3.8, 2.2 + difficulty*0.25);
+      bulletSpeed = Math.min(6.0, 3.8 + difficulty*0.3);
+      winMsgTimer = 90; target=null; targetActive=false;
+    } else {
+      droneHP--; ui.updateHP(); invincible=60; drone.vy=4;
+      sfx.hit(); vibrate([40]);
+      if(hit==='bullet') bullets = bullets.filter(b => Math.hypot(drone.x-b.x, drone.y-b.y) > 5);
+      if(droneHP<=0) { sfx.over(); vibrate([50,100,50]); state='gameover'; document.getElementById('go-score').textContent=score; document.getElementById('go-level').textContent=difficulty+1; ui.show('gameover'); }
+    }
+  }
+}
+
+function spawnTower() {
+  const minH = 60, maxH = H - groundH - towerGap - 60;
+  const topH = Math.random() * (maxH - minH) + minH;
+  towers.push({ x: W+60, topH, botY: topH + towerGap, passed: false, shootTimer: 0 });
+}
+function spawnBullet(t) {
+  const sx = t.x + 30, sy = (Math.random()>0.5 ? t.topH-10 : t.botY+10);
+  const dx = drone.x - sx, dy = drone.y - sy, dist = Math.hypot(dx,dy)||1;
+  bullets.push({ x: sx, y: sy, vx: (dx/dist)*bulletSpeed, vy: (dy/dist)*bulletSpeed, r: 5 });
+}
+function spawnTarget() { target = { x: W+60, y: Math.random()*(H-groundH-100)+50, w: 40, h: 25 }; targetActive = true; }
+
+// ================= 🎨 RENDER =================
+function drawBox3D(x, y, w, h, color1, color2) {
+  // Base
+  ctx.fillStyle = color1; ctx.fillRect(x, y, w, h);
+  // Top highlight
+  ctx.fillStyle = 'rgba(255,255,255,0.15)'; ctx.fillRect(x, y, w, h*0.15);
+  // Right shadow
+  ctx.fillStyle = 'rgba(0,0,0,0.25)'; ctx.fillRect(x + w - h*0.2, y, h*0.2, h);
+  // 3D Cap
+  ctx.fillStyle = color2;
+  ctx.beginPath(); ctx.moveTo(x+w, y); ctx.lineTo(x+w+15, y-8); ctx.lineTo(x+w+15, y+h-8); ctx.lineTo(x+w, y+h); ctx.fill();
+}
+
+function drawDrone() {
+  const t = droneTypes.find(d=>d.id===selectedDrone) || droneTypes[0];
+  ctx.save();
+  ctx.translate(drone.x + drone.w/2, drone.y + drone.h/2);
+  ctx.rotate(drone.rot);
+  
+  // Shadow
+  ctx.fillStyle = 'rgba(0,0,0,0.3)'; ctx.beginPath(); ctx.ellipse(5, drone.h/2+5, drone.w/2, 6, 0, 0, Math.PI*2); ctx.fill();
+  
+  // Body
+  const grd = ctx.createLinearGradient(-drone.w/2, -drone.h/2, drone.w/2, drone.h/2);
+  grd.addColorStop(0, t.c1); grd.addColorStop(1, t.c2);
+  ctx.fillStyle = grd;
+  ctx.beginPath(); ctx.ellipse(0, 0, drone.w/2, drone.h/2, 0, 0, Math.PI*2); ctx.fill();
+  ctx.strokeStyle = 'rgba(255,255,255,0.2)'; ctx.lineWidth = 1; ctx.stroke();
+  
+  // Rotors
+  ctx.strokeStyle = '#888'; ctx.lineWidth = 2;
+  for(let i=0; i<4; i++) {
+    const ang = (i*90 + drone.prop) * Math.PI/180;
+    const ox = Math.cos(ang)*22, oy = Math.sin(ang)*10 - 8;
+    ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo(ox, oy); ctx.stroke();
+    ctx.fillStyle = '#aaa'; ctx.beginPath(); ctx.ellipse(ox, oy, 10, 3, ang, 0, Math.PI*2); ctx.fill();
+  }
+
+  // Flag
+  ctx.fillStyle = '#fff'; ctx.fillRect(-15, -12, 12, 4);
+  ctx.fillStyle = '#0039A6'; ctx.fillRect(-15, -8, 12, 4);
+  ctx.fillStyle = '#D52B1E'; ctx.fillRect(-15, -4, 12, 4);
+  
+  ctx.restore();
+}
+
+function drawBackground() {
+  const sg = ctx.createLinearGradient(0,0,0,H); sg.addColorStop(0,'#0b1120'); sg.addColorStop(1,'#151e2d');
+  ctx.fillStyle = sg; ctx.fillRect(0,0,W,H);
+  // Stars
+  for(let i=0; i<50; i++) {
+    ctx.fillStyle = `rgba(255,255,255,${Math.random()*0.5+0.2})`;
+    ctx.beginPath(); ctx.arc((i*97 + frames*0.2)%W, (i*73)% (H-100), Math.random()*1.5+0.5, 0, Math.PI*2); ctx.fill();
+  }
+  // Ground
+  ctx.fillStyle = '#1e293b'; ctx.fillRect(0, H-groundH, W, groundH);
+  ctx.fillStyle = '#2d3a4a';
+  for(let i=0; i<W; i+=30) ctx.fillRect((i + frames*towerSpeed*0.5)%W, H-groundH, 20, 4);
+}
+
+function drawUIOverlay() {
+  if(winMsgTimer > 0) {
+    winMsgTimer--; const a = Math.min(1, winMsgTimer/20);
+    ctx.fillStyle = `rgba(0,0,0,${0.6*a})`; ctx.fillRect(W/2-130, H/2-30, 260, 60);
+    ctx.strokeStyle = `rgba(72,187,120,${a})`; ctx.lineWidth = 2; ctx.strokeRect(W/2-130, H/2-30, 260, 60);
+    ctx.fillStyle = `rgba(72,187,120,${a})`; ctx.font = 'bold 18px monospace'; ctx.textAlign = 'center';
+    ctx.fillText('✅ ЦЕЛЬ УНИЧТОЖЕНА! +5', W/2, H/2-5);
+  }
+}
+
+function draw() {
+  drawBackground();
+  towers.forEach(t => {
+    drawBox3D(t.x, 0, 55, t.topH, '#3a4a5a', '#2a3545');
+    drawBox3D(t.x, t.botY, 55, H-groundH-t.botY, '#3a4a5a', '#2a3545');
+    // Caps
+    ctx.fillStyle = '#5a6a7a'; ctx.fillRect(t.x-5, t.topH-8, 65, 8); ctx.fillRect(t.x-5, t.botY, 65, 8);
+    // Soldiers
+    ctx.fillStyle = '#2d4a2d'; ctx.fillRect(t.x+10, t.topH-20, 8, 15); ctx.fillRect(t.x+35, t.topH-20, 8, 15);
+    ctx.fillStyle = '#d4a574'; ctx.beginPath(); ctx.arc(t.x+14, t.topH-25, 4, 0, Math.PI*2); ctx.fill(); ctx.beginPath(); ctx.arc(t.x+39, t.topH-25, 4, 0, Math.PI*2); ctx.fill();
+  });
+  
+  bullets.forEach(b => {
+    ctx.fillStyle = '#ff4444'; ctx.beginPath(); ctx.arc(b.x, b.y, b.r, 0, Math.PI*2); ctx.fill();
+    ctx.strokeStyle = 'rgba(255,100,0,0.4)'; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(b.x, b.y); ctx.lineTo(b.x-b.vx*4, b.y-b.vy*4); ctx.stroke();
+  });
+
+  if(target && targetActive) {
+    drawBox3D(target.x - target.w/2, target.y - target.h/2, target.w, target.h, '#4a5a2a', '#3a4a1a');
+    ctx.fillStyle = '#005BBB'; ctx.fillRect(target.x-30, target.y-25, 14, 8);
+    ctx.fillStyle = '#FFD500'; ctx.fillRect(target.x-30, target.y-17, 14, 8);
+  }
+
+  if(invincible<=0 || frames%6<3) drawDrone();
+  drawUIOverlay();
+}
+
+function gameLoop() { update(); draw(); requestAnimationFrame(gameLoop); }
+gameLoop();
+</script>
+</body>
+</html>
