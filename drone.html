@@ -26,6 +26,7 @@ h2 { font-size: 1.3rem; margin: 6px 0; color: #ff6b35; }
 #hud { position: absolute; top: env(safe-area-inset-top, 10px); left: 10px; right: 10px; display: none; justify-content: space-between; align-items: center; font-size: 0.95rem; color: #fff; pointer-events: none; padding: 6px 10px; background: rgba(0,0,0,0.4); border-radius: 8px; backdrop-filter: blur(5px); }
 .hp-bar { width: 50px; height: 8px; background: rgba(0,0,0,0.6); border-radius: 4px; overflow: hidden; border: 1px solid rgba(255,255,255,0.3); }
 .hp-fill { height: 100%; background: #48bb78; transition: width 0.2s; }
+#shield-hud { display: none; color: #a855f7; font-weight: bold; text-shadow: 0 0 8px #a855f7; }
 #sound-toggle { position: absolute; top: env(safe-area-inset-top, 10px); right: 10px; background: rgba(0,0,0,0.4); color: #fff; border: 1px solid rgba(255,255,255,0.2); padding: 8px 10px; border-radius: 6px; cursor: pointer; font-size: 1.1rem; z-index: 10; }
 </style>
 </head>
@@ -34,6 +35,7 @@ h2 { font-size: 1.3rem; margin: 6px 0; color: #ff6b35; }
 <div id="ui">
   <div id="hud">
     <div style="display:flex;align-items:center;gap:6px;"><span>❤️</span><div class="hp-bar"><div class="hp-fill" id="hp-fill"></div></div></div>
+    <span id="shield-hud">🛡️ 5s</span>
     <span id="score-display" style="font-weight:bold; text-shadow:0 0 4px #000;">0</span>
   </div>
   <button id="sound-toggle">🔊</button>
@@ -65,7 +67,7 @@ let audioCtx, soundEnabled = true, audioUnlocked = false;
 function initAudio() { if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)(); if (audioCtx.state === 'suspended') audioCtx.resume(); if (!audioUnlocked && isIOS) { const o=audioCtx.createOscillator(), g=audioCtx.createGain(); g.gain.value=0.0001; o.connect(g); g.connect(audioCtx.destination); o.start(); o.stop(audioCtx.currentTime+0.05); audioUnlocked=true; } }
 function playTone(f, t, d, v=0.1) { if(!soundEnabled||!audioCtx) return; const o=audioCtx.createOscillator(), g=audioCtx.createGain(); o.type=t; o.frequency.setValueAtTime(f, audioCtx.currentTime); g.gain.setValueAtTime(v, audioCtx.currentTime); g.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime+d); o.connect(g); g.connect(audioCtx.destination); o.start(); o.stop(audioCtx.currentTime+d); }
 function playNoise(d, v=0.2) { if(!soundEnabled||!audioCtx) return; const b=audioCtx.createBuffer(1, audioCtx.sampleRate*d, audioCtx.sampleRate), d1=b.getChannelData(0); for(let i=0;i<d1.length;i++) d1[i]=Math.random()*2-1; const s=audioCtx.createBufferSource(), g=audioCtx.createGain(); s.buffer=b; g.gain.setValueAtTime(v, audioCtx.currentTime); g.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime+d); s.connect(g); g.connect(audioCtx.destination); s.start(); }
-const sfx = { flap:()=>{playNoise(0.05,0.1);playTone(300,'sine',0.05,0.05)}, hit:()=>{playNoise(0.4,0.4);playTone(80,'sawtooth',0.3,0.2)}, target:()=>{playTone(600,'sine',0.1,0.15);setTimeout(()=>playTone(900,'sine',0.2,0.15),100)}, over:()=>{playTone(200,'square',0.3,0.2);setTimeout(()=>playTone(100,'sawtooth',0.5,0.3),200)}, click:()=>{playTone(800,'sine',0.05,0.1)}, medkit:()=>{playTone(800,'sine',0.1,0.15);setTimeout(()=>playTone(1000,'sine',0.15,0.15),100)} };
+const sfx = { flap:()=>{playNoise(0.05,0.1);playTone(300,'sine',0.05,0.05)}, hit:()=>{playNoise(0.4,0.4);playTone(80,'sawtooth',0.3,0.2)}, target:()=>{playTone(600,'sine',0.1,0.15);setTimeout(()=>playTone(900,'sine',0.2,0.15),100)}, over:()=>{playTone(200,'square',0.3,0.2);setTimeout(()=>playTone(100,'sawtooth',0.5,0.3),200)}, click:()=>{playTone(800,'sine',0.05,0.1)}, medkit:()=>{playTone(800,'sine',0.1,0.15);setTimeout(()=>playTone(1000,'sine',0.15,0.15),100)}, shield:()=>{playTone(400,'sine',0.2,0.15);setTimeout(()=>playTone(600,'sine',0.2,0.15),100);setTimeout(()=>playTone(800,'sine',0.3,0.15),200)} };
 
 const canvas = document.getElementById('gameCanvas');
 const ctx = canvas.getContext('2d');
@@ -77,7 +79,6 @@ let highScore = parseInt(localStorage.getItem('drone_hs') || '0');
 function updateHS() { document.getElementById('hs-display').textContent = highScore; const g=document.getElementById('go-hs'); if(g) g.textContent = highScore; }
 updateHS();
 
-// 🚁 КОНФИГУРАЦИИ ДРОНОВ
 const droneConfigs = [
   { id:1, name:'ТАКТИЧЕСКИЙ', c1:'#4a4a5a', c2:'#2d2d3a', grav:0.40, flap:-7.5, hp:5, hitbox:16, rotSpd:1.0, desc:'Сбалансированный' },
   { id:2, name:'СТЕЛС',       c1:'#1e293b', c2:'#0f172a', grav:0.35, flap:-8.0, hp:3, hitbox:14, rotSpd:1.1, desc:'Лёгкий, манёвренный' },
@@ -90,7 +91,8 @@ let currentDrone = droneConfigs.find(d=>d.id===selectedDrone);
 let score = 0, frames = 0, difficulty = 0;
 let drone = { x: 80, y: H/2, w: 40, h: 24, vy: 0, rot: 0, prop: 0 };
 let droneHP = 5, maxHP = 5, invincible = 0, hitboxRadius = 16;
-let towers = [], bullets = [], particles = [], bgBuildings = [], medkit = null, target = null, targetActive = false;
+let isInvincible = false, invincibleShieldTimer = 0;
+let towers = [], bullets = [], particles = [], bgBuildings = [], medkit = null, shieldMedkit = null, target = null, targetActive = false;
 let towerTimer = 0, towerSpeed = 2.0, towerGap = 220, groundH = 80;
 let bulletSpeed = 3.0, slowMo = 0, speedMult = 1, winMsgTimer = 0, screenFlash = 0;
 let gravity = 0.4, flapPower = -7.5;
@@ -100,13 +102,19 @@ const ui = {
     document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
     const el = document.getElementById(`${screen}-screen`); if(el) el.classList.add('active');
     document.getElementById('hud').style.display = screen==='playing'?'flex':'none';
+    document.getElementById('shield-hud').style.display = isInvincible ? 'block' : 'none';
     state = screen;
     if(screen==='select') buildDroneGrid();
     if(screen==='playing') { sfx.click(); resetGame(); }
     updateHS();
   },
   updateHP: () => { const f=document.getElementById('hp-fill'); if(!f)return; f.style.width=`${(droneHP/maxHP)*100}%`; f.style.background=droneHP>2?'#48bb78':droneHP>1?'#ffaa00':'#ff4444'; },
-  updateScore: () => { const el=document.getElementById('score-display'); if(el) el.textContent = score; }
+  updateScore: () => { const el=document.getElementById('score-display'); if(el) el.textContent = score; },
+  updateShieldHUD: () => {
+    const el = document.getElementById('shield-hud');
+    if(isInvincible) { el.style.display='block'; el.textContent = `🛡️ ${Math.ceil(invincibleShieldTimer/60)}s`; }
+    else { el.style.display='none'; }
+  }
 };
 
 function buildDroneGrid() {
@@ -137,18 +145,15 @@ function generateWindows(topH, botY, w) {
 
 function resetGame() {
   currentDrone = droneConfigs.find(d=>d.id===selectedDrone);
-  gravity = currentDrone.grav;
-  flapPower = currentDrone.flap;
-  maxHP = currentDrone.hp;
-  hitboxRadius = currentDrone.hitbox;
-  
+  gravity = currentDrone.grav; flapPower = currentDrone.flap; maxHP = currentDrone.hp; hitboxRadius = currentDrone.hitbox;
   drone.x = W*0.25; drone.y = H/2; drone.vy = 0; drone.rot = 0;
-  towers = []; bullets = []; particles = []; medkit = null; target = null; targetActive = false;
+  towers = []; bullets = []; particles = []; medkit = null; shieldMedkit = null; target = null; targetActive = false;
   bgBuildings = [];
   for(let i=0; i<8; i++) bgBuildings.push({ x: W + i*120, h: 60 + Math.random()*100, w: 40 + Math.random()*30, color: `hsl(220, 20%, ${8+Math.random()*8}%)` });
   score = 0; frames = 0; difficulty = 0; towerSpeed = 2.0; bulletSpeed = 3.0; towerTimer = 40;
-  droneHP = maxHP; invincible = 0; slowMo = 0; speedMult = 1; winMsgTimer = 0; screenFlash = 0;
-  ui.updateHP(); ui.updateScore(); updateHS();
+  droneHP = maxHP; invincible = 0; isInvincible = false; invincibleShieldTimer = 0;
+  slowMo = 0; speedMult = 1; winMsgTimer = 0; screenFlash = 0;
+  ui.updateHP(); ui.updateScore(); ui.updateShieldHUD(); updateHS();
 }
 
 canvas.addEventListener('pointerdown', (e) => { e.preventDefault(); initAudio(); if(state==='playing'){drone.vy=flapPower;sfx.flap();} else if(state==='menu'||state==='gameover'){ui.show('select');} });
@@ -165,13 +170,13 @@ function addExplosion(x, y, count, type='hit') {
   }
 }
 
-// ✅ ПРОВЕРКА КОЛЛИЗИЙ: приоритет tower > bullet > target > medkit
 function checkCollisions() {
   const r = hitboxRadius;
   for(let t of towers) if (drone.x+r>t.x && drone.x-r<t.x+t.w && (drone.y-r<t.topH || drone.y+r>t.botY)) return 'tower';
   for(let b of bullets) if (Math.hypot(drone.x-b.x, drone.y-b.y) < r+b.r) return 'bullet';
   if(target && targetActive && Math.hypot(drone.x-target.x, drone.y-target.y) < r+22) return 'target';
   if(medkit && !medkit.collected && Math.hypot(drone.x-medkit.x, drone.y-medkit.y) < r+12) return 'medkit';
+  if(shieldMedkit && !shieldMedkit.collected && Math.hypot(drone.x-shieldMedkit.x, drone.y-shieldMedkit.y) < r+14) return 'shield';
   return null;
 }
 
@@ -186,10 +191,9 @@ function spawnBullet(t) {
   const dx=drone.x-sx, dy=drone.y-sy, dist=Math.hypot(dx,dy)||1;
   bullets.push({ x:sx, y:sy, vx:(dx/dist)*bulletSpeed, vy:(dy/dist)*bulletSpeed, r:5, life: 140 });
 }
-// ✅ Спавн цели с проверкой
-function spawnTarget() { if(!targetActive && !medkit) { target = { x:W+60, y:Math.random()*(H-groundH-120)+60, w:50, h:30 }; targetActive = true; } }
-// ✅ Спавн аптечки с проверкой
-function spawnMedkit() { if(!targetActive && !medkit) { medkit = { x: W+60, y: Math.random()*(H-groundH-100)+50, collected: false, pulse: 0 }; } }
+function spawnTarget() { if(!targetActive && !medkit && !shieldMedkit) { target = { x:W+60, y:Math.random()*(H-groundH-120)+60, w:50, h:30 }; targetActive = true; } }
+function spawnMedkit() { if(!targetActive && !medkit && !shieldMedkit) { medkit = { x: W+60, y: Math.random()*(H-groundH-100)+50, collected: false, pulse: 0 }; } }
+function spawnShield() { if(!targetActive && !medkit && !shieldMedkit) { shieldMedkit = { x: W+60, y: Math.random()*(H-groundH-100)+50, collected: false, pulse: 0 }; } }
 
 function update() {
   frames++;
@@ -197,6 +201,9 @@ function update() {
   if(slowMo>0) { slowMo--; speedMult=0.2; } else { speedMult = Math.min(1, speedMult+0.02); }
   if(invincible>0) invincible--;
   if(screenFlash>0) screenFlash -= 0.04;
+
+  // Shield timer
+  if(isInvincible) { invincibleShieldTimer--; ui.updateShieldHUD(); if(invincibleShieldTimer<=0) isInvincible=false; }
 
   drone.vy += gravity*speedMult;
   drone.y += drone.vy*speedMult;
@@ -213,12 +220,17 @@ function update() {
   towers.forEach(t => {
     t.x -= towerSpeed*speedMult;
     t.shootTimer++;
-    if(t.shootTimer > 200 && t.x > -30 && t.x < W*0.4 && Math.random() > 0.6) { t.shootTimer=0; spawnBullet(t); }
+    // 🎯 СКАЛИРОВАНИЕ СТРЕЛЬБЫ: легко в начале, сложно позже
+    const shootCooldown = Math.max(180, 400 - difficulty * 25);
+    const shootChance = Math.min(0.85, 0.05 + difficulty * 0.12);
+    if(t.shootTimer > shootCooldown && t.x > -30 && t.x < W*0.5 && Math.random() < shootChance) { 
+      t.shootTimer = 0; spawnBullet(t); 
+    }
     if(!t.passed && t.x+t.w < drone.x-10) { 
       t.passed=true; score++; ui.updateScore();
-      // ✅ Спавн каждые 10 очков (цель) и каждые 5 (аптечка), но не одновременно
       if(score%10===0) spawnTarget();
       else if(score%5===0 && score>0) spawnMedkit();
+      else if(score%15===0 && score>5) spawnShield();
     }
   });
   towers = towers.filter(t => t.x > -100);
@@ -226,13 +238,13 @@ function update() {
   bullets.forEach(b => { b.x += b.vx*speedMult; b.y += b.vy*speedMult; b.life--; });
   bullets = bullets.filter(b => b.life > 0 && b.x > -20 && b.x < W+20 && b.y > -20 && b.y < H+20);
 
-  // ✅ Движение цели
   if(target && targetActive) { target.x -= 1.5*speedMult; if(target.x < -50) { target=null; targetActive=false; } }
-  // ✅ Движение аптечки
   if(medkit && !medkit.collected) { medkit.x -= 1.5*speedMult; medkit.pulse += 0.1; if(medkit.x < -30) medkit = null; }
+  if(shieldMedkit && !shieldMedkit.collected) { shieldMedkit.x -= 1.5*speedMult; shieldMedkit.pulse += 0.1; if(shieldMedkit.x < -30) shieldMedkit = null; }
 
   const hit = checkCollisions();
-  if(hit && invincible<=0) {
+  if(hit) {
+    // Подбор предметов работает всегда
     if(hit==='target') {
       addExplosion(target.x, target.y, 50, 'target'); screenFlash = 1;
       sfx.target(); vibrate([30]); score+=5; difficulty++; ui.updateScore();
@@ -243,7 +255,12 @@ function update() {
     } else if(hit==='medkit') {
       sfx.medkit(); vibrate([15]); droneHP = Math.min(maxHP, droneHP+1); ui.updateHP();
       medkit.collected = true; addExplosion(medkit.x, medkit.y, 10, 'medkit'); medkit = null;
-    } else {
+    } else if(hit==='shield') {
+      sfx.shield(); vibrate([15, 15, 15]); isInvincible = true; invincibleShieldTimer = 300; ui.updateShieldHUD();
+      addExplosion(shieldMedkit.x, shieldMedkit.y, 15, 'shield'); shieldMedkit = null;
+    } 
+    // Урон только если нет щита и нет кд после удара
+    else if (!isInvincible && invincible <= 0) {
       addExplosion(drone.x, drone.y, 15, 'hit'); screenFlash = 0.8;
       droneHP--; ui.updateHP(); invincible=60; drone.vy=4;
       sfx.hit(); vibrate([40]);
@@ -257,35 +274,20 @@ function update() {
 }
 
 function drawBuilding(t) {
-  ctx.fillStyle = '#1e2530';
-  ctx.fillRect(t.x, 0, t.w, t.topH);
-  ctx.fillRect(t.x, t.botY, t.w, H-groundH-t.botY);
+  ctx.fillStyle = '#1e2530'; ctx.fillRect(t.x, 0, t.w, t.topH); ctx.fillRect(t.x, t.botY, t.w, H-groundH-t.botY);
   ctx.fillStyle = '#3a4a5a'; ctx.fillRect(t.x-3, t.topH-8, t.w+6, 8); ctx.fillRect(t.x-3, t.botY, t.w+6, 8);
-  
   t.windows.forEach(win => {
-    if(win.lit) {
-      ctx.fillStyle = win.warm ? '#ffcc66' : '#aaddff';
-      ctx.globalAlpha = 0.8;
-      ctx.fillRect(t.x + win.x, win.y, 8, 12);
-      ctx.globalAlpha = 1;
-    }
+    if(win.lit) { ctx.fillStyle = win.warm ? '#ffcc66' : '#aaddff'; ctx.globalAlpha = 0.8; ctx.fillRect(t.x + win.x, win.y, 8, 12); ctx.globalAlpha = 1; }
   });
-
   const sx = t.x + t.w/2;
-  [t.topH-20, t.botY+15].forEach((sy, idx) => {
-    if(t.shootTimer > 170 && t.x < W*0.4 && Math.random() > 0.5) {
-      ctx.fillStyle = 'rgba(255,0,0,0.3)'; ctx.beginPath(); ctx.arc(sx, sy, 8, 0, Math.PI*2); ctx.fill();
-    }
-    ctx.fillStyle = '#3d4a3a'; ctx.fillRect(sx-4, sy-8, 8, 14);
-    ctx.fillStyle = '#c9a66b'; ctx.beginPath(); ctx.arc(sx, sy-14, 5, 0, Math.PI*2); ctx.fill();
-    ctx.fillStyle = '#2a3528'; ctx.beginPath(); ctx.arc(sx, sy-16, 6, Math.PI, 0); ctx.fill();
-    ctx.fillStyle = '#3d4a3a'; ctx.fillRect(sx-4, sy+6, 3, 8); ctx.fillRect(sx+1, sy+6, 3, 8);
-    const ang = Math.atan2(drone.y-sy, drone.x-sx);
-    ctx.strokeStyle = '#111'; ctx.lineWidth = 2;
-    ctx.beginPath(); ctx.moveTo(sx, sy-4); ctx.lineTo(sx+Math.cos(ang)*14, sy-4+Math.sin(ang)*14); ctx.stroke();
-    if(frames%200 < 8 && Math.abs(t.x - drone.x) < 250) {
-      ctx.fillStyle = '#ffaa00'; ctx.beginPath(); ctx.arc(sx+Math.cos(ang)*15, sy-4+Math.sin(ang)*15, 4, 0, Math.PI*2); ctx.fill();
-    }
+  [t.topH-20, t.botY+15].forEach(sy => {
+    const isAiming = t.shootTimer > Math.max(180, 400 - difficulty*25) - 40 && t.x < W*0.5;
+    if(isAiming && Math.random() > 0.6) { ctx.fillStyle = 'rgba(255,0,0,0.25)'; ctx.beginPath(); ctx.arc(sx, sy, 7, 0, Math.PI*2); ctx.fill(); }
+    ctx.fillStyle = '#3d4a3a'; ctx.fillRect(sx-4, sy-8, 8, 14); ctx.fillStyle = '#c9a66b'; ctx.beginPath(); ctx.arc(sx, sy-14, 5, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = '#2a3528'; ctx.beginPath(); ctx.arc(sx, sy-16, 6, Math.PI, 0); ctx.fill(); ctx.fillStyle = '#3d4a3a'; ctx.fillRect(sx-4, sy+6, 3, 8); ctx.fillRect(sx+1, sy+6, 3, 8);
+    const ang = Math.atan2(drone.y-sy, drone.x-sx); ctx.strokeStyle = '#111'; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(sx, sy-4); ctx.lineTo(sx+Math.cos(ang)*14, sy-4+Math.sin(ang)*14); ctx.stroke();
+    const cooldown = Math.max(180, 400 - difficulty*25); const chance = Math.min(0.85, 0.05 + difficulty*0.12);
+    if(frames%cooldown < 10 && Math.random() < chance && Math.abs(t.x-drone.x)<250) { ctx.fillStyle='#ffaa00'; ctx.beginPath(); ctx.arc(sx+Math.cos(ang)*15, sy-4+Math.sin(ang)*15, 4, 0, Math.PI*2); ctx.fill(); }
   });
 }
 
@@ -293,10 +295,8 @@ function drawPickupTruck(x, y) {
   ctx.save(); ctx.translate(x, y);
   ctx.fillStyle = '#222'; ctx.beginPath(); ctx.arc(-15, 8, 5, 0, Math.PI*2); ctx.fill(); ctx.beginPath(); ctx.arc(12, 8, 5, 0, Math.PI*2); ctx.fill();
   ctx.fillStyle = '#555'; ctx.beginPath(); ctx.arc(-15, 8, 2, 0, Math.PI*2); ctx.fill(); ctx.beginPath(); ctx.arc(12, 8, 2, 0, Math.PI*2); ctx.fill();
-  ctx.fillStyle = '#4a5a3a'; ctx.fillRect(-22, -6, 44, 12);
-  ctx.fillStyle = '#3a4a2a'; ctx.beginPath(); ctx.moveTo(-20, -6); ctx.lineTo(-20, -16); ctx.lineTo(-8, -16); ctx.lineTo(-4, -6); ctx.fill();
-  ctx.fillStyle = '#2a3a1a'; ctx.fillRect(2, -12, 18, 6);
-  ctx.fillStyle = '#7799bb'; ctx.fillRect(-18, -14, 8, 6);
+  ctx.fillStyle = '#4a5a3a'; ctx.fillRect(-22, -6, 44, 12); ctx.fillStyle = '#3a4a2a'; ctx.beginPath(); ctx.moveTo(-20, -6); ctx.lineTo(-20, -16); ctx.lineTo(-8, -16); ctx.lineTo(-4, -6); ctx.fill();
+  ctx.fillStyle = '#2a3a1a'; ctx.fillRect(2, -12, 18, 6); ctx.fillStyle = '#7799bb'; ctx.fillRect(-18, -14, 8, 6);
   ctx.fillStyle = '#888'; ctx.fillRect(10, -22, 2, 16);
   const wave = Math.sin(frames * 0.1) * 2;
   ctx.fillStyle = '#005BBB'; ctx.beginPath(); ctx.moveTo(12, -26); ctx.lineTo(26+wave, -24); ctx.lineTo(26+wave, -18); ctx.lineTo(12, -20); ctx.fill();
@@ -310,7 +310,7 @@ function drawExplosions() {
     ctx.globalAlpha = p.life;
     if(p.type === 'drone' || p.type === 'hit') ctx.fillStyle = p.life>0.5?'#ff4444':'#ff8800';
     else if(p.type === 'target') ctx.fillStyle = p.life>0.6?'#ffdd00':p.life>0.3?'#ff6600':'#555';
-    else if(p.type === 'medkit') ctx.fillStyle = '#48bb78';
+    else if(p.type === 'medkit' || p.type === 'shield') ctx.fillStyle = '#a855f7';
     else ctx.fillStyle = '#aaa';
     ctx.beginPath(); ctx.arc(p.x, p.y, p.size, 0, Math.PI*2); ctx.fill();
   });
@@ -322,6 +322,7 @@ function drawDrone() {
   ctx.save();
   ctx.translate(drone.x + drone.w/2, drone.y + drone.h/2);
   ctx.rotate(drone.rot);
+  if(isInvincible) { ctx.shadowColor = '#a855f7'; ctx.shadowBlur = 20; }
   if(Math.abs(drone.vy) > 2) { ctx.fillStyle = 'rgba(200,200,200,0.4)'; ctx.beginPath(); ctx.arc(-drone.w/2 - 10, -5 + drone.vy*2, 5, 0, Math.PI*2); ctx.fill(); }
   const grd = ctx.createLinearGradient(-drone.w/2, -drone.h/2, drone.w/2, drone.h/2);
   grd.addColorStop(0, t.c1); grd.addColorStop(1, t.c2);
@@ -334,9 +335,7 @@ function drawDrone() {
     ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo(ox, oy); ctx.stroke();
     ctx.fillStyle = '#aaa'; ctx.beginPath(); ctx.ellipse(ox, oy, 10, 3, ang, 0, Math.PI*2); ctx.fill();
   }
-  ctx.fillStyle = '#fff'; ctx.fillRect(-15, -12, 12, 4);
-  ctx.fillStyle = '#0039A6'; ctx.fillRect(-15, -8, 12, 4);
-  ctx.fillStyle = '#D52B1E'; ctx.fillRect(-15, -4, 12, 4);
+  ctx.fillStyle = '#fff'; ctx.fillRect(-15, -12, 12, 4); ctx.fillStyle = '#0039A6'; ctx.fillRect(-15, -8, 12, 4); ctx.fillStyle = '#D52B1E'; ctx.fillRect(-15, -4, 12, 4);
   ctx.restore();
 }
 
@@ -344,11 +343,7 @@ function drawBackground() {
   const sg = ctx.createLinearGradient(0,0,0,H); sg.addColorStop(0,'#0b1120'); sg.addColorStop(1,'#151e2d');
   ctx.fillStyle = sg; ctx.fillRect(0,0,W,H);
   for(let i=0; i<50; i++) { ctx.fillStyle=`rgba(255,255,255,${Math.random()*0.4+0.2})`; ctx.beginPath(); ctx.arc((i*97+frames*0.2)%W, (i*73)%(H-100), Math.random()*1.5+0.5, 0, Math.PI*2); ctx.fill(); }
-  bgBuildings.forEach(b => {
-    ctx.fillStyle = b.color; ctx.fillRect(b.x, H-groundH-b.h, b.w, b.h);
-    ctx.fillStyle = 'rgba(255,200,100,0.1)';
-    for(let wy=H-groundH-b.h+10; wy<H-groundH-10; wy+=15) for(let wx=b.x+5; wx<b.x+b.w-5; wx+=10) ctx.fillRect(wx, wy, 4, 6);
-  });
+  bgBuildings.forEach(b => { ctx.fillStyle = b.color; ctx.fillRect(b.x, H-groundH-b.h, b.w, b.h); ctx.fillStyle = 'rgba(255,200,100,0.1)'; for(let wy=H-groundH-b.h+10; wy<H-groundH-10; wy+=15) for(let wx=b.x+5; wx<b.x+b.w-5; wx+=10) ctx.fillRect(wx, wy, 4, 6); });
   ctx.fillStyle = '#1e293b'; ctx.fillRect(0, H-groundH, W, groundH);
   ctx.fillStyle = '#2d3a4a';
   for(let i=0; i<W; i+=30) ctx.fillRect((i+frames*2*speedMult)%W, H-groundH, 20, 4);
@@ -356,27 +351,19 @@ function drawBackground() {
 
 function drawUIOverlay() {
   if(screenFlash>0) { ctx.fillStyle = screenFlash>0.5?'rgba(255,255,255,0.15)':'rgba(255,0,0,0.15)'; ctx.fillRect(0,0,W,H); }
+  if(isInvincible) { ctx.fillStyle = `rgba(168, 85, 247, ${Math.sin(frames*0.15)*0.05 + 0.05})`; ctx.fillRect(0,0,W,H); }
   if(winMsgTimer>0) { winMsgTimer--; const a=Math.min(1, winMsgTimer/25); ctx.fillStyle=`rgba(0,0,0,${0.6*a})`; ctx.fillRect(W/2-130, H/2-30, 260, 60); ctx.strokeStyle=`rgba(72,187,120,${a})`; ctx.lineWidth=2; ctx.strokeRect(W/2-130, H/2-30, 260, 60); ctx.fillStyle=`rgba(72,187,120,${a})`; ctx.font='bold 18px monospace'; ctx.textAlign='center'; ctx.fillText('✅ ЦЕЛЬ УНИЧТОЖЕНА! +5', W/2, H/2-5); }
 }
 
 function draw() {
   drawBackground();
   towers.forEach(drawBuilding);
-  bullets.forEach(b => {
-    ctx.strokeStyle = 'rgba(255,150,50,0.6)'; ctx.lineWidth = 3;
-    ctx.beginPath(); ctx.moveTo(b.x, b.y); ctx.lineTo(b.x-b.vx*8, b.y-b.vy*8); ctx.stroke();
-    ctx.fillStyle = '#ff4444'; ctx.beginPath(); ctx.arc(b.x, b.y, b.r, 0, Math.PI*2); ctx.fill();
-  });
-  if(medkit && !medkit.collected) {
-    const pulse = Math.sin(medkit.pulse)*3 + 12;
-    ctx.fillStyle = '#48bb78'; ctx.fillRect(medkit.x-pulse/2, medkit.y-pulse/2, pulse, pulse);
-    ctx.fillStyle = '#fff'; ctx.fillRect(medkit.x-1, medkit.y-pulse/2, 2, pulse); ctx.fillRect(medkit.x-pulse/2, medkit.y-1, pulse, 2);
-    ctx.strokeStyle = '#2d8a50'; ctx.lineWidth = 2; ctx.strokeRect(medkit.x-pulse/2-2, medkit.y-pulse/2-2, pulse+4, pulse+4);
-  }
+  bullets.forEach(b => { ctx.strokeStyle = 'rgba(255,150,50,0.6)'; ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(b.x, b.y); ctx.lineTo(b.x-b.vx*8, b.y-b.vy*8); ctx.stroke(); ctx.fillStyle = '#ff4444'; ctx.beginPath(); ctx.arc(b.x, b.y, b.r, 0, Math.PI*2); ctx.fill(); });
+  if(medkit && !medkit.collected) { const p = Math.sin(medkit.pulse)*3 + 12; ctx.fillStyle = '#48bb78'; ctx.fillRect(medkit.x-p/2, medkit.y-p/2, p, p); ctx.fillStyle = '#fff'; ctx.fillRect(medkit.x-1, medkit.y-p/2, 2, p); ctx.fillRect(medkit.x-p/2, medkit.y-1, p, 2); ctx.strokeStyle = '#2d8a50'; ctx.lineWidth = 2; ctx.strokeRect(medkit.x-p/2-2, medkit.y-p/2-2, p+4, p+4); }
+  if(shieldMedkit && !shieldMedkit.collected) { const p = Math.sin(shieldMedkit.pulse)*4 + 14; ctx.strokeStyle = '#a855f7'; ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(shieldMedkit.x, shieldMedkit.y, p, 0, Math.PI*2); ctx.stroke(); ctx.fillStyle = '#a855f7'; ctx.globalAlpha = 0.15; ctx.fill(); ctx.globalAlpha = 1; ctx.fillStyle = '#fff'; ctx.font = 'bold 14px monospace'; ctx.textAlign='center'; ctx.textBaseline='middle'; ctx.fillText('S', shieldMedkit.x, shieldMedkit.y); }
   if(target && targetActive) drawPickupTruck(target.x, target.y);
   if(invincible<=0 || frames%6<3) drawDrone();
-  drawExplosions();
-  drawUIOverlay();
+  drawExplosions(); drawUIOverlay();
 }
 
 function gameLoop() { update(); draw(); requestAnimationFrame(gameLoop); }
