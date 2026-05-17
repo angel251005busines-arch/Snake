@@ -77,7 +77,7 @@ let highScore = parseInt(localStorage.getItem('drone_hs') || '0');
 function updateHS() { document.getElementById('hs-display').textContent = highScore; const g=document.getElementById('go-hs'); if(g) g.textContent = highScore; }
 updateHS();
 
-// 🚁 КОНФИГУРАЦИИ ДРОНОВ (Теперь с уникальными характеристиками)
+// 🚁 КОНФИГУРАЦИИ ДРОНОВ
 const droneConfigs = [
   { id:1, name:'ТАКТИЧЕСКИЙ', c1:'#4a4a5a', c2:'#2d2d3a', grav:0.40, flap:-7.5, hp:5, hitbox:16, rotSpd:1.0, desc:'Сбалансированный' },
   { id:2, name:'СТЕЛС',       c1:'#1e293b', c2:'#0f172a', grav:0.35, flap:-8.0, hp:3, hitbox:14, rotSpd:1.1, desc:'Лёгкий, манёвренный' },
@@ -91,7 +91,7 @@ let score = 0, frames = 0, difficulty = 0;
 let drone = { x: 80, y: H/2, w: 40, h: 24, vy: 0, rot: 0, prop: 0 };
 let droneHP = 5, maxHP = 5, invincible = 0, hitboxRadius = 16;
 let towers = [], bullets = [], particles = [], bgBuildings = [], medkit = null, target = null, targetActive = false;
-let towerTimer = 0, towerSpeed = 2.0, towerGap = 220, groundH = 80; // 🔥 Увеличен промежуток
+let towerTimer = 0, towerSpeed = 2.0, towerGap = 220, groundH = 80;
 let bulletSpeed = 3.0, slowMo = 0, speedMult = 1, winMsgTimer = 0, screenFlash = 0;
 let gravity = 0.4, flapPower = -7.5;
 
@@ -165,6 +165,7 @@ function addExplosion(x, y, count, type='hit') {
   }
 }
 
+// ✅ ПРОВЕРКА КОЛЛИЗИЙ: приоритет tower > bullet > target > medkit
 function checkCollisions() {
   const r = hitboxRadius;
   for(let t of towers) if (drone.x+r>t.x && drone.x-r<t.x+t.w && (drone.y-r<t.topH || drone.y+r>t.botY)) return 'tower';
@@ -185,8 +186,10 @@ function spawnBullet(t) {
   const dx=drone.x-sx, dy=drone.y-sy, dist=Math.hypot(dx,dy)||1;
   bullets.push({ x:sx, y:sy, vx:(dx/dist)*bulletSpeed, vy:(dy/dist)*bulletSpeed, r:5, life: 140 });
 }
-function spawnTarget() { target = { x:W+60, y:Math.random()*(H-groundH-120)+60, w:50, h:30 }; targetActive = true; }
-function spawnMedkit() { if(medkit && !medkit.collected) return; medkit = { x: W+60, y: Math.random()*(H-groundH-100)+50, collected: false, pulse: 0 }; }
+// ✅ Спавн цели с проверкой
+function spawnTarget() { if(!targetActive && !medkit) { target = { x:W+60, y:Math.random()*(H-groundH-120)+60, w:50, h:30 }; targetActive = true; } }
+// ✅ Спавн аптечки с проверкой
+function spawnMedkit() { if(!targetActive && !medkit) { medkit = { x: W+60, y: Math.random()*(H-groundH-100)+50, collected: false, pulse: 0 }; } }
 
 function update() {
   frames++;
@@ -203,23 +206,29 @@ function update() {
   if(drone.y + drone.h > H - groundH) { addExplosion(drone.x, drone.y, 40, 'drone'); sfx.over(); vibrate([50,100,50]); state='gameover'; if(score>highScore){highScore=score; localStorage.setItem('drone_hs',highScore);} updateHS(); document.getElementById('go-score').textContent=score; document.getElementById('go-level').textContent=difficulty+1; ui.show('gameover'); return; }
 
   towerTimer++;
-  if(towerTimer > Math.max(70, 120 - difficulty*3)) { towerTimer=0; spawnTower(); if(score>0 && score%5===0 && !medkit) spawnMedkit(); }
+  if(towerTimer > Math.max(70, 120 - difficulty*3)) { towerTimer=0; spawnTower(); }
   
   bgBuildings.forEach(b => { b.x -= towerSpeed*speedMult*0.3; if(b.x + b.w < 0) { b.x = W + 50; b.h = 60 + Math.random()*100; } });
 
   towers.forEach(t => {
     t.x -= towerSpeed*speedMult;
     t.shootTimer++;
-    // 🔫 РЕЖЕ ВЫСТРЕЛЫ + ПРЕДУПРЕЖДЕНИЕ
     if(t.shootTimer > 200 && t.x > -30 && t.x < W*0.4 && Math.random() > 0.6) { t.shootTimer=0; spawnBullet(t); }
-    if(!t.passed && t.x+t.w < drone.x-10) { t.passed=true; score++; ui.updateScore(); if(score%10===0) spawnTarget(); }
+    if(!t.passed && t.x+t.w < drone.x-10) { 
+      t.passed=true; score++; ui.updateScore();
+      // ✅ Спавн каждые 10 очков (цель) и каждые 5 (аптечка), но не одновременно
+      if(score%10===0) spawnTarget();
+      else if(score%5===0 && score>0) spawnMedkit();
+    }
   });
   towers = towers.filter(t => t.x > -100);
 
   bullets.forEach(b => { b.x += b.vx*speedMult; b.y += b.vy*speedMult; b.life--; });
   bullets = bullets.filter(b => b.life > 0 && b.x > -20 && b.x < W+20 && b.y > -20 && b.y < H+20);
 
+  // ✅ Движение цели
   if(target && targetActive) { target.x -= 1.5*speedMult; if(target.x < -50) { target=null; targetActive=false; } }
+  // ✅ Движение аптечки
   if(medkit && !medkit.collected) { medkit.x -= 1.5*speedMult; medkit.pulse += 0.1; if(medkit.x < -30) medkit = null; }
 
   const hit = checkCollisions();
@@ -264,11 +273,9 @@ function drawBuilding(t) {
 
   const sx = t.x + t.w/2;
   [t.topH-20, t.botY+15].forEach((sy, idx) => {
-    // Предупреждение перед выстрелом
     if(t.shootTimer > 170 && t.x < W*0.4 && Math.random() > 0.5) {
       ctx.fillStyle = 'rgba(255,0,0,0.3)'; ctx.beginPath(); ctx.arc(sx, sy, 8, 0, Math.PI*2); ctx.fill();
     }
-    
     ctx.fillStyle = '#3d4a3a'; ctx.fillRect(sx-4, sy-8, 8, 14);
     ctx.fillStyle = '#c9a66b'; ctx.beginPath(); ctx.arc(sx, sy-14, 5, 0, Math.PI*2); ctx.fill();
     ctx.fillStyle = '#2a3528'; ctx.beginPath(); ctx.arc(sx, sy-16, 6, Math.PI, 0); ctx.fill();
