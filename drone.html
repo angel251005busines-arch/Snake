@@ -1,0 +1,462 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<title>Flappy Drone 3D</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; user-select: none; }
+body {
+  background: #050505;
+  overflow: hidden;
+  font-family: 'Segoe UI', Arial, sans-serif;
+  touch-action: none;
+  height: 100dvh;
+}
+#canvas-container { width: 100%; height: 100%; position: absolute; top: 0; left: 0; }
+canvas { display: block; width: 100%; height: 100%; }
+
+/* UI Overlay */
+#ui {
+  position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+  pointer-events: none; /* Пропускаем тапы к 3D-сцене */
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+}
+#ui > * { pointer-events: auto; } /* Включаем тапы для кнопок */
+
+.screen { display: none; flex-direction: column; align-items: center; text-align: center; color: #fff; width: 90%; max-width: 360px; }
+.screen.active { display: flex; }
+h1 { font-size: 2.5rem; text-shadow: 0 0 15px rgba(0,200,255,0.5); margin-bottom: 10px; }
+h2 { font-size: 1.5rem; margin: 10px 0; }
+.btn {
+  background: rgba(255,107,53,0.2); border: 2px solid #ff6b35; color: #fff;
+  padding: 12px 24px; margin: 8px; font-size: 1.1rem; cursor: pointer;
+  border-radius: 8px; transition: 0.2s; width: 80%;
+}
+.btn:active { transform: scale(0.95); background: rgba(255,107,53,0.4); }
+.drone-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 20px 0; width: 100%; }
+.drone-card {
+  background: rgba(255,255,255,0.05); border: 2px solid rgba(255,255,255,0.2);
+  border-radius: 10px; padding: 15px; cursor: pointer; transition: 0.2s;
+}
+.drone-card.selected { border-color: #48bb78; background: rgba(72,187,120,0.15); }
+.drone-card:active { transform: scale(0.96); }
+#hud {
+  position: absolute; top: 15px; left: 15px; right: 15px;
+  display: flex; justify-content: space-between; align-items: center;
+  font-size: 1rem; color: #fff; pointer-events: none;
+}
+.hp-bar { width: 60px; height: 8px; background: rgba(0,0,0,0.5); border-radius: 4px; overflow: hidden; border: 1px solid rgba(255,255,255,0.3); }
+.hp-fill { height: 100%; background: #48bb78; transition: width 0.2s; }
+#sound-toggle {
+  position: absolute; top: 15px; right: 15px; background: rgba(0,0,0,0.4);
+  color: #fff; border: 1px solid rgba(255,255,255,0.2); padding: 8px 12px;
+  border-radius: 6px; cursor: pointer; font-size: 1.2rem;
+}
+#webgl-fallback { display: none; color: #ff4444; padding: 20px; text-align: center; background: #111; }
+</style>
+</head>
+<body>
+
+<div id="canvas-container"></div>
+
+<div id="ui">
+  <!-- HUD -->
+  <div id="hud" style="display:none;">
+    <div style="display:flex;align-items:center;gap:8px;">
+      <span>❤️</span><div class="hp-bar"><div class="hp-fill" id="hp-fill"></div></div>
+    </div>
+    <span id="score-display">0</span>
+  </div>
+
+  <button id="sound-toggle">🔊</button>
+
+  <!-- Menu -->
+  <div id="menu-screen" class="screen active">
+    <h1>FLAPPY DRONE</h1>
+    <h2 style="color:#ff6b35;">3D EDITION</h2>
+    <button class="btn" onclick="ui.show('select')">▶ ИГРАТЬ</button>
+    <div style="margin-top:10px; opacity:0.7; font-size:0.9rem;">Тапай / Клик / Пробел</div>
+  </div>
+
+  <!-- Select Drone -->
+  <div id="select-screen" class="screen">
+    <h2>ВЫБЕРИ ДРОНА</h2>
+    <div class="drone-grid" id="drone-grid">
+      <!-- Заполняется JS -->
+    </div>
+    <button class="btn" onclick="ui.show('menu')" style="border-color:#888;">← НАЗАД</button>
+  </div>
+
+  <!-- Game Over -->
+  <div id="gameover-screen" class="screen">
+    <h2 style="color:#ff4444;">GAME OVER</h2>
+    <div style="font-size:1.2rem; margin:10px 0;">Счёт: <span id="go-score">0</span> | Ур: <span id="go-level">1</span></div>
+    <button class="btn" onclick="ui.show('select')">🔄 В МЕНЮ ДРОНОВ</button>
+  </div>
+</div>
+
+<div id="webgl-fallback">
+  ⚠️ Твоё устройство не поддерживает WebGL.<br>
+  Попробуй открыть в другом браузере или обнови систему.
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+// ================= AUDIO & VIBRATION =================
+let audioCtx, soundEnabled = true;
+function initAudio() { if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)(); if (audioCtx.state === 'suspended') audioCtx.resume(); }
+function playTone(freq, type, dur, vol=0.1) { if(!soundEnabled||!audioCtx) return; const o=audioCtx.createOscillator(), g=audioCtx.createGain(); o.type=type; o.frequency.setValueAtTime(freq, audioCtx.currentTime); g.gain.setValueAtTime(vol, audioCtx.currentTime); g.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime+dur); o.connect(g); g.connect(audioCtx.destination); o.start(); o.stop(audioCtx.currentTime+dur); }
+function playNoise(dur, vol=0.2) { if(!soundEnabled||!audioCtx) return; const buf=audioCtx.createBuffer(1, audioCtx.sampleRate*dur, audioCtx.sampleRate), d=buf.getChannelData(0); for(let i=0;i<d.length;i++) d[i]=Math.random()*2-1; const s=audioCtx.createBufferSource(), g=audioCtx.createGain(); s.buffer=buf; g.gain.setValueAtTime(vol, audioCtx.currentTime); g.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime+dur); s.connect(g); g.connect(audioCtx.destination); s.start(); }
+const sfx = { flap:()=>{playNoise(0.05,0.1);playTone(300,'sine',0.05,0.05)}, hit:()=>{playNoise(0.4,0.4);playTone(80,'sawtooth',0.3,0.2)}, target:()=>{playTone(600,'sine',0.1,0.15);setTimeout(()=>playTone(900,'sine',0.2,0.15),100)}, over:()=>{playTone(200,'square',0.3,0.2);setTimeout(()=>playTone(100,'sawtooth',0.5,0.3),200)}, click:()=>{playTone(800,'sine',0.05,0.1)} };
+function vibrate(p) { if(navigator.vibrate) navigator.vibrate(p); }
+
+// ================= 3D SCENE =================
+const container = document.getElementById('canvas-container');
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x0f172a);
+scene.fog = new THREE.Fog(0x0f172a, 50, 150);
+
+const camera = new THREE.PerspectiveCamera(60, window.innerWidth/window.innerHeight, 0.1, 300);
+camera.position.set(0, 25, 80);
+camera.lookAt(0, 0, 0);
+
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+container.appendChild(renderer.domElement);
+
+if (!renderer.capabilities.isWebGL) { document.getElementById('webgl-fallback').style.display='block'; renderer.domElement.style.display='none'; }
+
+// Lights
+const ambient = new THREE.AmbientLight(0x404060, 0.6);
+scene.add(ambient);
+const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
+dirLight.position.set(20, 50, 40);
+dirLight.castShadow = true;
+dirLight.shadow.mapSize.set(1024, 1024);
+scene.add(dirLight);
+
+// Ground
+const groundGeo = new THREE.PlaneGeometry(400, 200, 20, 20);
+const groundMat = new THREE.MeshStandardMaterial({ color: 0x2d4a2d, roughness: 0.9 });
+const ground = new THREE.Mesh(groundGeo, groundMat);
+ground.rotation.x = -Math.PI/2;
+ground.position.y = -30;
+ground.receiveShadow = true;
+scene.add(ground);
+
+// Stars
+const starGeo = new THREE.BufferGeometry();
+const starCount = 300;
+const starPos = new Float32Array(starCount*3);
+for(let i=0;i<starCount*3;i++) starPos[i] = (Math.random()-0.5)*300;
+starGeo.setAttribute('position', new THREE.BufferAttribute(starPos, 3));
+const starMat = new THREE.PointsMaterial({ color: 0xffffff, size: 0.5, sizeAttenuation: true });
+scene.add(new THREE.Points(starGeo, starMat));
+
+// Drone Model (Procedural)
+function createDroneMesh(style) {
+  const group = new THREE.Group();
+  const bodyMat = new THREE.MeshStandardMaterial({ color: style==='stealth'?0x1e293b : style==='racing'?0x2a2a2a : style==='heavy'?0x4b5320 : 0x3a3a3a, roughness: 0.7 });
+  const body = new THREE.Mesh(new THREE.BoxGeometry(6, 2.5, 4), bodyMat);
+  body.castShadow = true;
+  group.add(body);
+
+  // Rotors
+  const rotorMat = new THREE.MeshStandardMaterial({ color: 0x666666, emissive: style==='stealth'?0x00d4ff:0x000000, emissiveIntensity: style==='stealth'?0.3:0 });
+  [[-4,2,-3],[4,2,-3],[-4,2,3],[4,2,3]].forEach((p,i)=>{
+    const arm = new THREE.Mesh(new THREE.BoxGeometry(3, 0.4, 0.4), bodyMat);
+    arm.position.set(p[0]>0?2:-2, 0.5, p[2]>0?1.5:-1.5);
+    group.add(arm);
+    const rotor = new THREE.Mesh(new THREE.CylinderGeometry(1.8, 1.8, 0.2, 8), rotorMat);
+    rotor.position.set(p[0], p[1], p[2]);
+    rotor.rotation.x = Math.PI/2;
+    group.add(rotor);
+  });
+
+  // Flag
+  const flagGeo = new THREE.PlaneGeometry(2, 1.2, 2, 1);
+  const flagMat = new THREE.MeshStandardMaterial({ side: THREE.DoubleSide, color: 0xffffff });
+  const flag = new THREE.Mesh(flagGeo, flagMat);
+  flag.position.set(-1, 3, 0);
+  group.add(flag);
+
+  group.userData = { rotors: [group.children[2], group.children[4], group.children[6], group.children[8]], flag };
+  return group;
+}
+
+const droneTypes = [
+  { id:1, name:'ТАКТИЧЕСКИЙ', style:'tactical' },
+  { id:2, name:'СТЕЛС', style:'stealth' },
+  { id:3, name:'FPV', style:'racing' },
+  { id:4, name:'ТЯЖЁЛЫЙ', style:'heavy' }
+];
+let selectedStyle = 1;
+const droneMesh = createDroneMesh('tactical');
+droneMesh.position.set(-15, 5, 0);
+scene.add(droneMesh);
+
+// Tower System
+const towers = [];
+const towerGeo = new THREE.BoxGeometry(8, 60, 8);
+const towerMat = new THREE.MeshStandardMaterial({ color: 0x555555, roughness: 0.6 });
+let towerTimer = 0;
+const towerGap = 22;
+let towerSpeed = 0.15;
+
+function spawnTower() {
+  const topH = 10 + Math.random() * 25;
+  const top = new THREE.Mesh(towerGeo, towerMat);
+  top.position.y = topH + 30;
+  top.scale.y = topH / 30;
+  top.position.x = 40; top.position.z = 0;
+  top.castShadow = true; top.receiveShadow = true;
+  
+  const botH = 35 - topH;
+  const bot = new THREE.Mesh(towerGeo, towerMat);
+  bot.position.y = -botH/2 - towerGap/2;
+  bot.scale.y = botH / 30;
+  bot.position.x = 40; bot.position.z = 0;
+  bot.castShadow = true; bot.receiveShadow = true;
+
+  const group = new THREE.Group();
+  group.add(top, bot);
+  group.userData = { passed: false, shootTimer: 0 };
+  scene.add(group);
+  towers.push(group);
+}
+
+// Bullet System
+const bullets = [];
+const bulletGeo = new THREE.SphereGeometry(0.4, 8, 8);
+const bulletMat = new THREE.MeshStandardMaterial({ color: 0xff3333, emissive: 0xff6600, emissiveIntensity: 0.5 });
+let bulletSpeed = 0.25;
+
+function spawnBullet(tower) {
+  const b = new THREE.Mesh(bulletGeo, bulletMat);
+  b.position.copy(tower.position).add(new THREE.Vector3(0, (Math.random()>0.5?15:-15), 0));
+  b.lookAt(droneMesh.position);
+  b.userData = { vel: new THREE.Vector3().subVectors(droneMesh.position, b.position).normalize().multiplyScalar(bulletSpeed) };
+  scene.add(b);
+  bullets.push(b);
+}
+
+// Target System
+let target = null;
+let targetActive = false;
+const targetMat = new THREE.MeshStandardMaterial({ color: 0x4a5a2a });
+function spawnTarget() {
+  if(target) scene.remove(target);
+  target = new THREE.Group();
+  const body = new THREE.Mesh(new THREE.BoxGeometry(6, 2, 3), targetMat);
+  body.position.y = 0;
+  target.add(body);
+  target.position.set(40, 0 + (Math.random()-0.5)*10, 0);
+  target.userData = { type: 'vehicle' };
+  scene.add(target);
+  targetActive = true;
+}
+
+// Game State
+let state = 'menu';
+let score = 0, frames = 0, difficulty = 0;
+let droneHP = 5, maxHP = 5;
+let vy = 0, gravity = 0.015, flapPower = 0.25;
+let invincible = 0, hitFlash = 0, slowMo = 0, speedMult = 1;
+let winMsgTimer = 0;
+
+// UI Logic
+const ui = {
+  show: (screen) => {
+    document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+    document.getElementById(`${screen}-screen`).classList.add('active');
+    document.getElementById('hud').style.display = screen==='playing'?'flex':'none';
+    state = screen;
+    if(screen==='select') buildDroneGrid();
+    if(screen==='playing') { sfx.click(); resetGame(); }
+  },
+  updateHP: () => {
+    const fill = document.getElementById('hp-fill');
+    fill.style.width = `${(droneHP/maxHP)*100}%`;
+    fill.style.background = droneHP>2?'#48bb78':droneHP>1?'#ffaa00':'#ff4444';
+  },
+  updateScore: () => {
+    document.getElementById('score-display').textContent = score;
+  }
+};
+
+function buildDroneGrid() {
+  const grid = document.getElementById('drone-grid');
+  grid.innerHTML = '';
+  droneTypes.forEach(dt => {
+    const card = document.createElement('div');
+    card.className = `drone-card ${selectedStyle===dt.id?'selected':''}`;
+    card.innerHTML = `<div style="font-weight:bold;margin-bottom:5px;">${dt.name}</div><div style="font-size:0.8rem;opacity:0.7;">Стиль: ${dt.style}</div>`;
+    card.onclick = () => { selectedStyle=dt.id; sfx.click(); buildDroneGrid(); ui.show('playing'); };
+    grid.appendChild(card);
+  });
+}
+
+function resetGame() {
+  droneMesh.position.set(-15, 5, 0); vy = 0;
+  towers.forEach(t => scene.remove(t)); towers.length = 0;
+  bullets.forEach(b => scene.remove(b)); bullets.length = 0;
+  if(target) { scene.remove(target); target=null; targetActive=false; }
+  score = 0; frames = 0; difficulty = 0; towerSpeed = 0.15; bulletSpeed = 0.25;
+  droneHP = maxHP; invincible = 0; hitFlash = 0; slowMo = 0; speedMult = 1;
+  ui.updateHP(); ui.updateScore();
+  state = 'playing';
+}
+
+// Input
+function handleInput(e) {
+  e.preventDefault();
+  initAudio();
+  const rect = renderer.domElement.getBoundingClientRect();
+  const x = (e.clientX||e.touches?.[0]?.clientX||0) - rect.left;
+  const y = (e.clientY||e.touches?.[0]?.clientY||0) - rect.top;
+  const w = rect.width, h = rect.height;
+  const nx = x/w, ny = y/h;
+
+  if (state === 'menu') { ui.show('select'); return; }
+  if (state === 'playing') {
+    vy = flapPower;
+    sfx.flap();
+    return;
+  }
+}
+window.addEventListener('pointerdown', handleInput, {passive:false});
+window.addEventListener('keydown', e => { if(e.code==='Space') handleInput(e); });
+
+document.getElementById('sound-toggle').onclick = (e) => {
+  e.stopPropagation();
+  soundEnabled = !soundEnabled;
+  e.target.textContent = soundEnabled?'🔊':'🔇';
+  if(soundEnabled) sfx.click();
+};
+
+// Collision
+function checkCollisions() {
+  const dx = droneMesh.position.x, dy = droneMesh.position.y;
+  const dr = 3.5;
+
+  // Towers
+  for(let t of towers) {
+    const tx = t.position.x;
+    const topH = t.children[0].scale.y * 30 + 30;
+    const botY = -t.children[1].scale.y * 30 - towerGap/2;
+    if (Math.abs(dx - tx) < 8 && (dy > topH-10 || dy < botY+10)) return 'tower';
+  }
+
+  // Bullets
+  for(let b of bullets) {
+    const dist = droneMesh.position.distanceTo(b.position);
+    if(dist < dr + 0.8) return 'bullet';
+  }
+
+  // Target
+  if(target && targetActive) {
+    const dist = droneMesh.position.distanceTo(target.position);
+    if(dist < dr + 4) return 'target';
+  }
+  return null;
+}
+
+// Main Loop
+function animate() {
+  requestAnimationFrame(animate);
+  frames++;
+
+  // Drone Animation
+  droneMesh.rotation.z = Math.max(-0.5, Math.min(vy * 1.5, 0.6));
+  droneMesh.userData.rotors.forEach(r => r.rotation.y += 0.8 * speedMult);
+  if(slowMo>0) { slowMo--; speedMult=0.3; } else { speedMult = Math.min(1, speedMult+0.01); }
+  if(invincible>0) invincible--;
+  if(hitFlash>0) hitFlash--;
+  if(winMsgTimer>0) winMsgTimer--;
+
+  if(state === 'playing') {
+    vy -= gravity * speedMult;
+    droneMesh.position.y += vy * speedMult;
+    droneMesh.position.y = Math.max(-25, Math.min(25, droneMesh.position.y));
+
+    // Towers
+    towerTimer++;
+    if(towerTimer > 120/difficulty+80) { towerTimer=0; spawnTower(); }
+    towers.forEach(t => {
+      t.position.x -= towerSpeed * speedMult;
+      t.userData.shootTimer++;
+      if(t.userData.shootTimer > 80 && t.position.x < 25 && t.position.x > -20) {
+        t.userData.shootTimer = 0; spawnBullet(t);
+      }
+      if(!t.userData.passed && t.position.x < droneMesh.position.x - 5) {
+        t.userData.passed = true; score++; ui.updateScore();
+        if(score%10===0) spawnTarget();
+      }
+    });
+    for(let i=towers.length-1; i>=0; i--) { if(towers[i].position.x < -30) { scene.remove(towers[i]); towers.splice(i,1); } }
+
+    // Bullets
+    bullets.forEach(b => { b.position.add(b.userData.vel.clone().multiplyScalar(speedMult)); });
+    for(let i=bullets.length-1; i>=0; i--) { if(bullets[i].position.x<-40||bullets[i].position.x>40||bullets[i].position.y<-30) { scene.remove(bullets[i]); bullets.splice(i,1); } }
+
+    // Target
+    if(target && targetActive) {
+      target.position.x -= 0.1 * speedMult;
+      target.rotation.y += 0.02;
+      if(target.position.x < -30) { scene.remove(target); target=null; targetActive=false; }
+    }
+
+    // Collision
+    const hit = checkCollisions();
+    if(hit === 'tower' || hit === 'bullet') {
+      if(invincible <= 0) {
+        droneHP--; ui.updateHP();
+        invincible = 60; hitFlash = 15;
+        vy = -0.15;
+        sfx.hit(); vibrate([40]);
+        if(hit==='bullet') { const idx=bullets.findIndex(b=>b.position.distanceTo(droneMesh.position)<5); if(idx>-1){scene.remove(bullets[idx]); bullets.splice(idx,1);} }
+        if(droneHP<=0) {
+          sfx.over(); vibrate([50,100,50]);
+          state='gameover';
+          document.getElementById('go-score').textContent=score;
+          document.getElementById('go-level').textContent=difficulty+1;
+          ui.show('gameover');
+        }
+      }
+    } else if(hit === 'target') {
+      sfx.target(); vibrate([20]);
+      score+=5; difficulty++; ui.updateScore();
+      droneHP = Math.min(maxHP, droneHP+1); ui.updateHP();
+      slowMo=40; speedMult=0.3;
+      towerSpeed = Math.min(0.35, 0.15 + difficulty*0.03);
+      bulletSpeed = Math.min(0.4, 0.25 + difficulty*0.03);
+      winMsgTimer = 90;
+      scene.remove(target); target=null; targetActive=false;
+    }
+
+    if(droneMesh.position.y <= -28) {
+      sfx.over(); vibrate([50,100,50]); state='gameover';
+      document.getElementById('go-score').textContent=score;
+      document.getElementById('go-level').textContent=difficulty+1;
+      ui.show('gameover');
+    }
+  }
+
+  renderer.render(scene, camera);
+}
+
+// Resize
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth/window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
+
+animate();
+</script>
+</body>
+</html>
